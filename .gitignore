@@ -8,3 +8,7 @@
 /.reasonix/desktop-topic-created-at.json
 /.idea/CSNETWK-MAGIC-THE-GATHERING.iml
 /.idea/.gitignore
+/.reasonix/desktop-topic-auto-title-meta.json
+/.idea/misc.xml
+/mtgnp-prompt.txt
+/setup_project.sh
