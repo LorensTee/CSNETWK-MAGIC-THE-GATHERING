@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from .connection import connect
 from typing import Any
 
 from client.config import ClientConfig
@@ -76,7 +77,7 @@ class GameClient:
         # 2. Connect.
         self.state = "CONNECTING"
         try:
-            self.connection = await ClientConnection.connect(
+            self.connection = await connect(
                 host=self.config.host,
                 port=self.config.port,
                 verbose=self.config.verbose,
@@ -94,6 +95,19 @@ class GameClient:
 
         log_connection(self.config.host, self.config.port)
         self.state = "LOBBY"
+
+        ready_pdu = {
+            "type": "PLAYER_READY",
+            "seq_num": 1, 
+            "player_id": self.config.player_id,
+            "deck_list": [
+                "forest_001", 
+                "lightning_bolt_001", 
+                "mountain_001", 
+                "forest_002"
+            ] 
+        }
+        await self.connection.send_pdu(ready_pdu)
 
         # 4. Run concurrent tasks (use gather for Python 3.10 compatibility).
         tasks = [

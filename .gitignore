@@ -12,3 +12,5 @@
 /.idea/misc.xml
 /mtgnp-prompt.txt
 /setup_project.sh
+__pycache__/
+*.pyc
