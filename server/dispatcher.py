@@ -66,7 +66,7 @@ async def dispatch(
     # ── 1. Priority-wait path ───────────────────────────────────────────
     # If the lifecycle is waiting for a PDU from this player (priority
     # window is active), resolve the future directly.
-    if pid and pid in lifecycle._pending_pdu:
+    if pid and pid in lifecycle._pending_pdu and pdu_type != "PING":
         future = lifecycle._pending_pdu.pop(pid)
         if not future.done():
             future.set_result(pdu)

@@ -547,6 +547,7 @@ class GameLifecycle:
     ) -> None:
         """Process an action taken during a priority window."""
         atype = action.get("type", "")
+        print(f"\n🧠 BRAIN RECEIVED IT: {action}")
         pid = action.get("_player_id", ap_id)
 
         if atype == "CAST_SPELL":
@@ -593,29 +594,68 @@ class GameLifecycle:
             await self.broadcast(pdu)
 
         elif atype == "PLAY_LAND":
-            card_id = action.get("card_id", "")
-            ok, code, msg = validate_play_land(gs, pid, card_id)
-            if ok:
+            print("\n🚪 ENTERED PLAY_LAND BLOCK")
+            try:
+                card_id = action.get("card", action.get("card_id", ""))
+                
+                # 1. Validate using the real card database
+                ok, code, msg = validate_play_land(gs, pid, card_id, self.card_loader)
+                
+                if not ok:
+                    await self.send_error(
+                        self._connection_for(pid),
+                        code or "ILLEGAL_ACTION", msg, action,
+                    )
+                    return
+
+                # 2. Remove from hand
                 hand = gs.hands.get(pid, [])
                 if card_id in hand:
                     hand.remove(card_id)
-                cd = self.card_loader.get_card(card_id)
-                power = cd.power if cd and cd.power else 0
-                toughness = cd.toughness if cd and cd.toughness else 0
+                
+                # 3. Strip instance ID to load stats safely
+                base_id = card_id
+                if "_" in card_id:
+                    parts = card_id.rsplit("_", 1)
+                    if parts[1].isdigit():
+                        base_id = parts[0]
+                        
+                cd = self.card_loader.get_card(base_id)
+                power = cd.power if cd and getattr(cd, 'power', None) else 0
+                toughness = cd.toughness if cd and getattr(cd, 'toughness', None) else 0
+                
+                def_id = base_id
+                if cd:
+                    for attr in ['card_def_id', 'id', 'name', 'card_id']:
+                        if hasattr(cd, attr) and getattr(cd, attr):
+                            def_id = getattr(cd, attr)
+                            break
+
                 perm = Permanent(
                     id=card_id,
-                    card_def_id=(cd.card_def_id if cd else card_id),
+                    card_def_id=def_id,
                     controller=pid,
                     tapped=False,
                     power=power or 0,
                     toughness=toughness or 0,
                     summoning_sick=False,
                 )
+                
                 gs.battlefield.setdefault(pid, []).append(perm)
                 gs.land_played_this_turn = True
+                
+                print(f"\n✅ SUCCESS: Added {card_id} to board!")
+                
+                # 5. Broadcast the new state to clients
+                await self._broadcast_game_state(gs)
+                
+            except Exception as e:
+                import traceback
+                print(f"\n🚨 FATAL ENGINE CRASH IN PLAY_LAND:")
+                traceback.print_exc()
 
         elif atype == "ACTIVATE_ABILITY":
-            pass  # Simplified: just log.
+            pass
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PDU handler methods (called by dispatcher)
@@ -643,9 +683,9 @@ class GameLifecycle:
                 return
 
         # Validate deck.
-        ok, msg = validate_deck(player_id, deck_list, self.card_loader)
+        ok, err_code, msg = validate_deck(player_id, deck_list, self.card_loader)
         if not ok:
-            await self.send_error(conn, "ILLEGAL_DECK", msg, pdu)
+            await self.send_error(conn, err_code or "ILLEGAL_DECK", msg, pdu)
             return
 
         # Accept — if player already submitted, replace deck, don't inflate.
@@ -748,6 +788,7 @@ class GameLifecycle:
     async def handle_play_land(
         self, conn: ServerConnection, pdu: dict[str, Any]
     ) -> None:
+        print(f"\n🗑️ GARBAGE CAN ATE IT: {pdu}")
         pass
 
     async def handle_declare_attackers(

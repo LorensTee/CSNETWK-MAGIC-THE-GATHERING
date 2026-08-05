@@ -29,13 +29,13 @@ def main() -> None:
         help="Enable verbose PDU/state logging to stderr",
     )
     parser.add_argument(
-        "--time-limit-ms", type=int, default=60000,
-        help="Default priority time limit in milliseconds (default: 60000)",
+        "--time-limit-ms", type=int, default=3600000,
+        help="Default priority time limit in milliseconds (default: 3600000)",
     )
     parser.add_argument(
-        "--disconnect-timeout-s", type=int, default=30,
+        "--disconnect-timeout-s", type=int, default=6000,
         help="Seconds before a disconnected player is considered gone "
-             "(default: 30)",
+             "(default: 6000)",
     )
 
     args = parser.parse_args()

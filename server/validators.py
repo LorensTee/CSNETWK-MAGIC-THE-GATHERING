@@ -178,6 +178,7 @@ def validate_play_land(
     state: GameState,
     player: str,
     card_id: str,
+    card_loader
 ) -> ValidationResult:
     """Validate a ``PLAY_LAND`` action.
 
@@ -205,13 +206,18 @@ def validate_play_land(
     if not _player_owns_card(state, player, card_id):
         return False, "ILLEGAL_ACTION", f"Card '{card_id}' is not in your hand."
     # 6. Card type is Land.
-    from server.card_loader import CardLoader
-    loader = CardLoader()
-    card_def = loader.get_card(card_id)
+    base_id = card_id
+    if "_" in card_id:
+        parts = card_id.rsplit("_", 1)
+        if parts[1].isdigit():
+            base_id = parts[0]
+            
+    card_def = card_loader.get_card(base_id)
+    
     if card_def is None:
-        return False, "ILLEGAL_ACTION", f"Unknown card '{card_id}'."
+        return False, "ILLEGAL_ACTION", f"Unknown card '{base_id}' (from instance '{card_id}')."
     if card_def.card_type != "Land":
-        return False, "ILLEGAL_ACTION", f"'{card_id}' is not a land."
+        return False, "ILLEGAL_ACTION", f"'{base_id}' is not a land."
 
     return True, None, ""
 

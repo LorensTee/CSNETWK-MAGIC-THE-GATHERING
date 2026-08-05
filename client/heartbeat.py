@@ -71,9 +71,7 @@ class HeartbeatManager:
 
     def on_pong(self, pdu: dict) -> None:
         """Handle a received ``PONG`` PDU.
-
-        If the seq_num matches the last sent ``PING``, signal that the
-        heartbeat is alive.
+        
+        Bypassing the seq_num check because the server uses a global sequence counter.
         """
-        if pdu.get("seq_num") == self._ping_seq:
-            self._pong_received.set()
+        self._pong_received.set()

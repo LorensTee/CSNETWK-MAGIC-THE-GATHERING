@@ -131,20 +131,13 @@ class ServerConnection:
     # ── Async loops ─────────────────────────────────────────────────────
 
     async def read_loop(self) -> None:
-        """Continuously read PDUs from the client and dispatch them.
+        """Continuously read PDUs from the client and dispatch them."""
+        import traceback
 
-        This coroutine runs until the connection is closed or an unrecoverable
-        error occurs.  Each successfully received PDU is passed to the
-        *on_pdu* callback.
-
-        The caller is responsible for catching ``ConnectionError`` /
-        ``EOFError`` after this loop returns to handle disconnection.
-        """
         while not self._closed:
             try:
                 pdu = await self.recv_pdu()
             except ProtocolError as exc:
-                # Protocol-level error (bad framing / invalid JSON).
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.warning("Protocol error from %s: %s",
@@ -155,7 +148,16 @@ class ServerConnection:
                 break
 
             if self.on_pdu is not None:
-                await self.on_pdu(self, pdu)
+                try:
+                    await self.on_pdu(self, pdu)
+                except Exception as e:
+                    print("\n" + "="*50)
+                    print(f"🚨 FATAL ERROR IN PLAYER {self.player_id} LOOP 🚨")
+                    traceback.print_exc()
+                    print("="*50 + "\n")
+                    # Break the loop so the socket closes cleanly instead of zombifying
+                    self._closed = True
+                    break
 
     async def write_loop(self) -> None:
         """Continuously drain the outgoing queue and send framed PDUs.
