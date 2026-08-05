@@ -130,7 +130,11 @@ class GameLifecycle:
         future = loop.create_future()
         self._pending_pdu[player_id] = future
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
+            pdu = await asyncio.wait_for(future, timeout=timeout)
+            
+            pdu["_player_id"] = player_id 
+            
+            return pdu
         except asyncio.TimeoutError:
             raise
         finally:
@@ -597,8 +601,9 @@ class GameLifecycle:
             print("\n🚪 ENTERED PLAY_LAND BLOCK")
             try:
                 card_id = action.get("card", action.get("card_id", ""))
+
+                pid = action.get("player_id") or gs.priority_holder
                 
-                # 1. Validate using the real card database
                 ok, code, msg = validate_play_land(gs, pid, card_id, self.card_loader)
                 
                 if not ok:

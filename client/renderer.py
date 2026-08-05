@@ -50,7 +50,12 @@ class Renderer:
             return
 
         player_id = self.client.config.player_id or "?"
-        opponent = self._get_opponent(visible_state)
+        opponent = visible_state.get("opponent_id") 
+        if not opponent:
+            opponent = "?"
+            
+        phase = visible_state.get("phase", "?")
+        turn = visible_state.get("turn", 0)
         phase = visible_state.get("phase", "?")
         turn = visible_state.get("turn", 0)
 

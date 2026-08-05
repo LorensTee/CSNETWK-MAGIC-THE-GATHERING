@@ -219,6 +219,8 @@ def build_visible_state(
         hand_counts[opponent] = len(gs.hands[opponent])
 
     return {
+        "viewer_id": for_player,
+        "opponent_id": opponent,
         "turn": gs.turn,
         "active_player": gs.active_player,
         "phase": gs.phase,
