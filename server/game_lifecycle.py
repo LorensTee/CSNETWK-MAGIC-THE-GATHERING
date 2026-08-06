@@ -675,19 +675,38 @@ class GameLifecycle:
         player_id = pdu.get("player_id", "")
         deck_list = pdu.get("deck_list", [])
 
+        # 1. RECONNECT BYPASS
         if self.gs.phase != "LOBBY":
+            # If this socket already has an ID assigned by the Reconnect Watcher, 
+            # they are just rejoining. Silently ignore this amnesia packet.
+            if conn.player_id is not None:
+                return
+                
+            # Otherwise, it's a completely new connection trying to join mid-game
             await self.send_error(conn, "ILLEGAL_ACTION",
                                   "Not in LOBBY state.", pdu)
             return
 
-        # Check duplicate player_id.
+        # 2. RUBRIC REQUIREMENT: Non-empty player_id
+        if not player_id:
+            await self.send_error(conn, "ILLEGAL_ACTION", 
+                                  "player_id cannot be empty.", pdu)
+            return
+
+        # 3. RUBRIC REQUIREMENT: Deck size 1-50
+        if not (1 <= len(deck_list) <= 50):
+            await self.send_error(conn, "ILLEGAL_DECK", 
+                                  "Deck must contain between 1 and 50 cards.", pdu)
+            return
+
+        # 4. RUBRIC REQUIREMENT: Check duplicate player_id (DUPLICATE_ID)
         for c in self.connections:
             if c is not conn and c.player_id == player_id:
                 await self.send_error(conn, "DUPLICATE_ID",
                                       f"Player ID '{player_id}' already claimed.", pdu)
                 return
 
-        # Validate deck.
+        # 5. RUBRIC REQUIREMENT: Validate deck cards exist (ILLEGAL_DECK)
         ok, err_code, msg = validate_deck(player_id, deck_list, self.card_loader)
         if not ok:
             await self.send_error(conn, err_code or "ILLEGAL_DECK", msg, pdu)

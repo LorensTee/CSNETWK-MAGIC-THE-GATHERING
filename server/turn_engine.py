@@ -68,6 +68,12 @@ class TurnEngine:
         Iterates through all 14 phases.  Returns when the phase would
         loop back to UNTAP (i.e. after CLEANUP).
         """
+        # 1. NEW: Explicitly declare the active player in the global state!
+        gs.active_player = ap_id
+        
+        # 2. NEW: Reset the land drop for the new turn!
+        gs.land_played_this_turn = False 
+
         # Increment turn counter for this new turn.
         gs.turn += 1
 
@@ -79,6 +85,10 @@ class TurnEngine:
             prev_phase = gs.phase
             gs.phase = phase
 
+            # 3. NEW: Reset priority to the Active Player at the start of EVERY phase.
+            # (In MTG, the active player always gets the microphone first in a new phase)
+            gs.priority_holder = ap_id
+
             # Broadcast transition.
             if self._advance_handler is not None and prev_phase != phase:
                 await self._advance_handler(gs, prev_phase, phase)
@@ -86,13 +96,16 @@ class TurnEngine:
             # ── Auto phases (no priority, no handler call) ─────────────
             if phase == "UNTAP":
                 self._handle_untap(gs, ap_id)
+                # Untap step has NO priority in MTG. Clear the holder so the client UI shows waiting.
+                gs.priority_holder = None 
+                # (You might want to broadcast the state here so the UI updates untaps immediately)
                 continue
 
             if phase == "CLEANUP":
                 self._handle_cleanup(gs, ap_id)
                 # If cleanup signals discard needed, invoke the phase handler
                 # so the lifecycle can open a priority window for DISCARD.
-                if gs._cleanup_discard_for is not None:
+                if getattr(gs, '_cleanup_discard_for', None) is not None:
                     if self._phase_handler is not None:
                         await self._phase_handler(gs, ap_id, nap_id, phase)
                 continue

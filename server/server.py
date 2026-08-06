@@ -9,6 +9,8 @@ connects the dispatcher, and hands off to ``GameLifecycle``.
 from __future__ import annotations
 
 import asyncio
+import json
+import struct
 from typing import Any
 
 from server.card_loader import CardLoader
@@ -74,8 +76,76 @@ class GameServer:
             for conn in self._connections:
                 conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
 
-            # Run the game.
+            async def connection_manager():
+                import time, json, struct
+                disconnect_times = {}
+                print("🚨 [WATCHDOG] ONLINE AND SWEEPING!") # If you don't see this, the task is dead.
+                
+                while not lifecycle._game_over.is_set():
+                    try:
+                        # 1. Sweep for timeouts
+                        for i, c in enumerate(self._connections):
+                            if getattr(c, '_closed', False):
+                                if c not in disconnect_times:
+                                    print(f"⚠️ [WATCHDOG] Detected {c.player_id} crash! Starting {self.config.disconnect_timeout_s}s timer...")
+                                    disconnect_times[c] = time.time()
+                                elif time.time() - disconnect_times[c] > self.config.disconnect_timeout_s:
+                                    print(f"⏰ [WATCHDOG] {c.player_id} timed out! Nuking game.")
+                                    winner_conn = self._connections[1 - i]
+                                    
+                                    if not getattr(winner_conn, '_closed', False):
+                                        go_pdu = {
+                                            "type": "GAME_OVER",
+                                            "seq_num": winner_conn.seq_num,
+                                            "winner_id": winner_conn.player_id,
+                                            "loser_id": c.player_id,
+                                            "reason": "DISCONNECT"
+                                        }
+                                        payload = json.dumps(go_pdu).encode('utf-8')
+                                        winner_conn.writer.write(struct.pack('>I', len(payload)) + payload)
+                                        winner_conn.writer.close()
+                                    
+                                    lifecycle._game_over.set()
+                                    return
+                        
+                        # 2. Process incoming connections
+                        try:
+                            new_conn = await asyncio.wait_for(self._incoming.get(), timeout=1.0)
+                        except (asyncio.TimeoutError, TimeoutError):
+                            continue # Nothing came in, go loop again
+                            
+                        # Find the empty seat
+                        for i, old_conn in enumerate(self._connections):
+                            if getattr(old_conn, '_closed', False):
+                                if old_conn in disconnect_times and (time.time() - disconnect_times[old_conn] > self.config.disconnect_timeout_s):
+                                    new_conn.writer.close()
+                                    break
+                                
+                                print(f"🔄 [RECONNECT] {old_conn.player_id} rejoined the game!")
+                                new_conn.player_id = old_conn.player_id
+                                new_conn.seq_num = old_conn.seq_num
+                                new_conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
+                                
+                                self._connections[i] = new_conn
+                                if old_conn in disconnect_times:
+                                    del disconnect_times[old_conn]
+                                
+                                asyncio.create_task(new_conn.read_loop())
+                                if lifecycle.gs:
+                                    await lifecycle._broadcast_game_state(lifecycle.gs)
+                                break
+                    except Exception as e:
+                        print(f"🚨 [WATCHDOG CRASHED]: {e}")
+                        await asyncio.sleep(1)
+
+            # 1. START THE WATCHDOG FIRST
+            conn_manager_task = asyncio.create_task(connection_manager())
+
+            # 2. RUN THE GAME SECOND
             await lifecycle.run()
+
+            # 3. CLEAN UP THIRD
+            conn_manager_task.cancel()
 
             # Reset for next game.
             for conn in self._connections:
@@ -91,7 +161,10 @@ class GameServer:
 
         Accepts up to 2 connections; refuses extras.
         """
-        if len(self._connections) >= 2:
+
+        active_count = sum(1 for c in self._connections if not c._closed)
+
+        if active_count >= 2:
             # Already have two players — refuse.
             if self.config.verbose:
                 import sys

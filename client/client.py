@@ -96,16 +96,19 @@ class GameClient:
         log_connection(self.config.host, self.config.port)
         self.state = "LOBBY"
 
+        my_deck = (
+            [f"forest_{i:03d}" for i in range(1, 15)] +          # 14 Forests
+            [f"mountain_{i:03d}" for i in range(1, 9)] +         # 8 Mountains
+            [f"lightning_bolt_{i:03d}" for i in range(1, 5)] +   # 4 Instants
+            [f"grizzly_bears_{i:03d}" for i in range(1, 5)] +    # 4 Bears
+            [f"lava_spike_{i:03d}" for i in range(1, 5)]         # 4 Sorceries
+        )
+
         ready_pdu = {
             "type": "PLAYER_READY",
             "seq_num": 1, 
             "player_id": self.config.player_id,
-            "deck_list": [
-                "forest_001", 
-                "lightning_bolt_001", 
-                "mountain_001", 
-                "forest_002"
-            ] 
+            "deck_list": my_deck 
         }
         await self.connection.send_pdu(ready_pdu)
 

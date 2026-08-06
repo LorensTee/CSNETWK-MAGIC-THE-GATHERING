@@ -33,9 +33,9 @@ def main() -> None:
         help="Default priority time limit in milliseconds (default: 3600000)",
     )
     parser.add_argument(
-        "--disconnect-timeout-s", type=int, default=6000,
+        "--disconnect-timeout-s", type=int, default=10,
         help="Seconds before a disconnected player is considered gone "
-             "(default: 6000)",
+             "(default: 10)",
     )
 
     args = parser.parse_args()

@@ -33,4 +33,4 @@ class ServerConfig:
     port: int = 4444
     verbose: bool = False
     time_limit_ms: int = 3_600_000
-    disconnect_timeout_s: int = 6000
+    disconnect_timeout_s: int = 10

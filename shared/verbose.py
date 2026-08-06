@@ -17,6 +17,7 @@ from typing import Any
 
 from shared.pdus import PDU_TYPES
 
+import json
 
 def _summarize(pdu: dict[str, Any]) -> str:
     """Return a compact one-line summary of *pdu* appropriate for logging."""
@@ -134,28 +135,15 @@ def _summarize(pdu: dict[str, Any]) -> str:
 
 
 def format_pdu_sent(direction_label: str, pdu: dict[str, Any]) -> str:
-    """Format a one-line log string for an *outgoing* PDU.
 
-    Parameters
-    ----------
-    direction_label :
-        A label identifying who sent the PDU and to whom.
-        Examples: ``"S→C"``, ``"C→S"``, ``"S→P1"``.
-    pdu :
-        The PDU dict being sent.
+    summary = f"[{direction_label}] {_summarize(pdu)}"
+    raw_json = json.dumps(pdu, indent=2)
 
-    Returns
-    -------
-    A single-line string suitable for printing to stderr.
-    """
-    return f"[{direction_label}] {_summarize(pdu)}"
+    return f"{summary}\n{raw_json}"
 
 
 def format_pdu_received(direction_label: str, pdu: dict[str, Any]) -> str:
-    """Format a one-line log string for an *incoming* PDU.
+    summary = f"[{direction_label}] {_summarize(pdu)}"
+    raw_json = json.dumps(pdu, indent=2)
 
-    Same format as *format_pdu_sent*.  The direction label is the caller's
-    responsibility (e.g. the server might pass ``"C→S player_2"``, the client
-    might pass ``"S→C"``).
-    """
-    return f"[{direction_label}] {_summarize(pdu)}"
+    return f"{summary}\n{raw_json}"
