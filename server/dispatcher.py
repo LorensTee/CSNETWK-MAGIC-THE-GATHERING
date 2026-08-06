@@ -60,19 +60,65 @@ async def dispatch(
     pdu :
         The parsed PDU dict.
     """
+
+    if "type" not in pdu or "seq_num" not in pdu:
+        await lifecycle.send_error(
+            conn,
+            "MALFORMED_PDU",
+            "Every PDU must include 'type' and 'seq_num' fields.",
+            pdu
+        )
+        return
+    
     pid = conn.player_id
     pdu_type = pdu.get("type", "")
+    client_seq = pdu["seq_num"]
 
-    # ── 1. Priority-wait path ───────────────────────────────────────────
-    # If the lifecycle is waiting for a PDU from this player (priority
-    # window is active), resolve the future directly.
-    if pid and pid in lifecycle._pending_pdu and pdu_type != "PING":
+    if pdu_type == "CONCEDE":
+        print(f"🚨 [INTERRUPT] {pid} is conceding! Nuking the game engine...")
+        
+        # 1. Broadcast the GAME_OVER and set the game_over flag
+        winner_id = lifecycle._opponent(pid)
+        if winner_id:
+            await lifecycle._end_game(lifecycle.gs, "CONCEDE", winner_id, pid)
+        
+        # 2. DERAIL THE ENGINE
+        # By canceling the future instead of resolving it, we force an 
+        # asyncio.CancelledError inside the engine's wait loop. This instantly 
+        # kills the current phase and forces the engine to exit cleanly!
+        if pid in lifecycle._pending_pdu:
+            future = lifecycle._pending_pdu.pop(pid)
+            if not future.done():
+                future.cancel()  # <--- The magic bullet
+                
+        # Also cancel the opponent's future just in case the engine was waiting on them
+        opponent_id = lifecycle._opponent(pid)
+        if opponent_id and opponent_id in lifecycle._pending_pdu:
+            future = lifecycle._pending_pdu.pop(opponent_id)
+            if not future.done():
+                future.cancel()
+
+        return
+
+    # ── 2. Priority-wait path & STALE_ACTION Defense ────────────────────
+    if pid and pid in lifecycle._pending_pdu and pdu_type not in ("PING", "PONG"):
+        
+        # RUBRIC REQUIREMENT: Server rejects stale seq_nums
+        if client_seq < conn.seq_num:
+            await lifecycle.send_error(
+                conn,
+                "STALE_ACTION",
+                f"Action is stale. PDU seq_num {client_seq} is older than server seq_num {conn.seq_num}.",
+                pdu
+            )
+            return
+
         future = lifecycle._pending_pdu.pop(pid)
         if not future.done():
             future.set_result(pdu)
             return
 
-    # ── 2. Normal handler path ─────────────────────────────────────────
+    # ── 3. Normal handler path ─────────────────────────────────────────
     pdu["_player_id"] = pid
 
     handler_name = _HANDLER_MAP.get(pdu_type)

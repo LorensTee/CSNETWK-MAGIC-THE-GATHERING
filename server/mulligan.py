@@ -100,13 +100,18 @@ def process_mulligan_choice(
     cards_to_bottom :
         Card IDs to bottom (must be empty if *keep* is False).
     """
+
+    current_mulls = gs.mulligan_counts.get(player_id, 0)
+
     if not keep:
         # Take a mulligan.
         shuffle_hand_into_library(gs, player_id)
         draw_fresh_hand(gs, player_id, 7)
         # Increment mulligan count.
-        gs.mulligan_counts[player_id] = gs.mulligan_counts.get(player_id, 0) + 1
+        gs.mulligan_counts[player_id] = current_mulls + 1
     else:
-        # Keep — bottom the required cards.
+        if len(cards_to_bottom) != current_mulls:
+            raise ValueError(f"Player took {current_mulls} mulligans but tried to bottom {len(cards_to_bottom)} cards.")
+            
         if cards_to_bottom:
             bottom_cards(gs, player_id, cards_to_bottom)

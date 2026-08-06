@@ -60,9 +60,13 @@ class ClientDispatcher:
         self, pdu: dict[str, Any]
     ) -> None:
         """Replace visible state and update client lifecycle state."""
+
+        if "seq_num" in pdu:
+            self.client._current_priority_seq = pdu["seq_num"]
+            
         state_obj = pdu.get("state", {})
         self.client.visible_state = state_obj
-
+        
         phase = state_obj.get("phase", "")
         # Map server phase → client state.
         if phase == "LOBBY":
