@@ -554,14 +554,56 @@ def _effect_rod_of_ruin(
 
 
 def _effect_vanilla_creature(
-    gs: GameState,
+    gs,
     controller: str,
     targets: list[str],
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Handler for creatures with no special abilities on entry."""
-    return [_permanent_enters(extra.get("card_id", "creature_001"), controller)]
+    
+    card_id = extra.get("card_id", "")
+    card_loader = extra.get("card_loader")
+    
+    # 1. Grab stats and check for Haste
+    power, toughness = 0, 0
+    haste = False
+    def_id = card_id
+    
+    if card_loader:
+        base_id = card_id.rsplit("_", 1)[0] if "_" in card_id else card_id
+        cd = card_loader.get_card(base_id)
+        if cd:
+            power = cd.power if getattr(cd, 'power', None) is not None else 0
+            toughness = cd.toughness if getattr(cd, 'toughness', None) is not None else 0
+            def_id = getattr(cd, 'card_id_base', base_id)
+            
+            # Did the parser find Haste?
+            if any(ab.get("name") == "haste" for ab in cd.abilities):
+                haste = True
+
+    # 2. Construct the Permanent object (Note the summoning_sick logic!)
+    from server.game_state import Permanent  # Adjust import if Permanent is in a models.py file
+    perm = Permanent(
+        id=card_id,
+        card_def_id=def_id,
+        controller=controller,
+        tapped=False,
+        power=power,
+        toughness=toughness,
+        summoning_sick=not haste,  # Haste creatures skip summoning sickness!
+    )
+    
+    # 3. Actually put it on the board!
+    gs.battlefield.setdefault(controller, []).append(perm)
+    print(f"⚔️ SPAWNED {card_id} for {controller} (Haste: {haste})")
+
+    # 4. Return the network message
+    return [{
+        "change_type": "PERMANENT_ENTERS",
+        "card_id": card_id,
+        "controller": controller,
+        "tapped": False,
+    }]
 
 
 def _effect_vanilla_noncreature(

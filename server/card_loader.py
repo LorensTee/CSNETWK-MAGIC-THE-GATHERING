@@ -238,6 +238,28 @@ class CardLoader:
 
         # Tap abilities
         if "tap:" in effect or "tap:" in effect:
-            abilities.append({"type": "activated", "name": "tap", "requires_tap": True})
+
+            produces = {}
+            name = csv_row.get("Card Name", "").strip().lower()
+
+            if "add r" in effect or "add {r}" in effect or name == "mountain":
+                produces["R"] = 1
+            elif "add g" in effect or "add {g}" in effect or name == "forest":
+                produces["G"] = 1
+            elif "add u" in effect or "add {u}" in effect or name == "island":
+                produces["U"] = 1
+            elif "add w" in effect or "add {w}" in effect or name == "plains":
+                produces["W"] = 1
+            elif "add b" in effect or "add {b}" in effect or name == "swamp":
+                produces["B"] = 1
+            elif "add 1" in effect or "add {c}" in effect:
+                produces["C"] = 1
+
+            abilities.append({
+                "type": "activated", 
+                "name": "tap", 
+                "requires_tap": True,
+                "produces": produces
+            })
 
         return abilities

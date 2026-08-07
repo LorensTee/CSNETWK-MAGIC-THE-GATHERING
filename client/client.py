@@ -97,11 +97,12 @@ class GameClient:
         self.state = "LOBBY"
 
         my_deck = (
-            [f"forest_{i:03d}" for i in range(1, 15)] +          # 14 Forests
-            [f"mountain_{i:03d}" for i in range(1, 9)] +         # 8 Mountains
-            [f"lightning_bolt_{i:03d}" for i in range(1, 5)] +   # 4 Instants
-            [f"grizzly_bears_{i:03d}" for i in range(1, 5)] +    # 4 Bears
-            [f"lava_spike_{i:03d}" for i in range(1, 5)]         # 4 Sorceries
+            [f"mountain_{i:03d}" for i in range(1, 11)] +        # 10 Mountains
+            [f"forest_{i:03d}" for i in range(1, 11)] +          # 10 Forests
+            [f"goblin_guide_{i:03d}" for i in range(1, 5)] +     # 4 Haste Creatures (1 Red)
+            [f"grizzly_bears_{i:03d}" for i in range(1, 5)] +    # 4 Vanilla Creatures (1 Green, 1 Generic)
+            [f"giant_growth_{i:03d}" for i in range(1, 5)] +     # 4 Combat Buffs (1 Green)
+            [f"lightning_bolt_{i:03d}" for i in range(1, 5)]     # 4 Removals/Burn (1 Red)
         )
 
         ready_pdu = {

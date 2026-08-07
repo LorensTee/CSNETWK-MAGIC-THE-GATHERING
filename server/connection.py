@@ -84,8 +84,12 @@ class ServerConnection:
         ConnectionError
             If the underlying TCP write fails.
         """
-        self.seq_num += 1
-        pdu["seq_num"] = self.seq_num
+
+        pdu_type = pdu.get("type", "")
+
+        if pdu_type not in ("PING", "PONG"):
+            self.seq_num += 1
+            pdu["seq_num"] = self.seq_num
 
         if self.verbose:
             label = f"S→C {self.player_id or '?'}"

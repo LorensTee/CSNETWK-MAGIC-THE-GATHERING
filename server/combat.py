@@ -241,6 +241,8 @@ class CombatManager:
             # Damage to a player reduces their life.
             if target in gs.life_totals:
                 new_life[target] -= event["amount"]
+                
+        gs.life_totals = new_life
 
         # ── Apply deaths ─────────────────────────────────────────────────
         for died_id in creatures_died:

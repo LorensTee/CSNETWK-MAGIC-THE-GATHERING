@@ -28,6 +28,8 @@ from shared.pdus import (
     create_priority_pass,
 )
 
+from server.card_loader import CardLoader
+
 if TYPE_CHECKING:
     from client.client import GameClient
 
@@ -45,6 +47,8 @@ class InputHandler:
     def __init__(self, client: GameClient) -> None:
         self.client = client
         self._pending_bottom: list[str] | None = None  # cards to bottom from mulligan
+        self.card_loader = CardLoader()
+        self.card_loader.load()
 
     async def run(self) -> None:
         """Main input loop — reads lines forever."""
@@ -168,7 +172,14 @@ class InputHandler:
 
         card_id = hand[idx]
         targets: list[str] = [args[1]] if len(args) > 1 else []
-        mana_payment: dict[str, int] = {"R": 1}  # Simplified: auto-pay.
+
+        card_def = self.card_loader.get_card(card_id)
+        if not card_def:
+            print(f"Error: Could not find card definition for '{card_id}'")
+            return None
+
+        mana_payment: dict[str, int] = dict(card_def.mana_cost)
+
         return create_cast_spell(
             seq_num=self._get_seq_num(),
             card_id=card_id,

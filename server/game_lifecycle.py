@@ -660,7 +660,57 @@ class GameLifecycle:
                 traceback.print_exc()
 
         elif atype == "ACTIVATE_ABILITY":
-            pass
+            source_id = action.get("source_id", "")
+            ability_index = action.get("ability_index", 0)
+            
+            # 1. Find the permanent on the battlefield
+            perm = None
+            for p in gs.battlefield.get(pid, []):
+                if p.id == source_id:
+                    perm = p
+                    break
+            
+            if not perm:
+                await self.send_error(
+                    self._connection_for(pid),
+                    "ILLEGAL_ACTION", f"Permanent '{source_id}' not found.", action,
+                )
+                return
+
+            if perm.tapped:
+                await self.send_error(
+                    self._connection_for(pid),
+                    "ILLEGAL_ACTION", f"'{source_id}' is already tapped.", action,
+                )
+                return
+
+            # 2. Get the card definition to find what it produces
+            base_id = source_id.rsplit("_", 1)[0] if "_" in source_id else source_id
+            cd = self.card_loader.get_card(base_id)
+            
+            if not cd or ability_index >= len(cd.abilities):
+                await self.send_error(
+                    self._connection_for(pid),
+                    "ILLEGAL_ACTION", f"Invalid ability index {ability_index}.", action,
+                )
+                return
+                
+            ability = cd.abilities[ability_index]
+            
+            # 3. Apply the cost (tapping)
+            if ability.get("requires_tap"):
+                perm.tapped = True
+                
+            # 4. Generate the mana!
+            produces = ability.get("produces", {})
+            for color, amount in produces.items():
+                current = getattr(gs.mana_pool, color, 0)
+                setattr(gs.mana_pool, color, current + amount)
+                
+            print(f"💧 MANA ADDED! Pool is now: W:{gs.mana_pool.W} U:{gs.mana_pool.U} B:{gs.mana_pool.B} R:{gs.mana_pool.R} G:{gs.mana_pool.G} C:{gs.mana_pool.C}")
+            
+            # Broadcast the state update so the client sees the tapped land
+            await self._broadcast_game_state(gs)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PDU handler methods (called by dispatcher)
