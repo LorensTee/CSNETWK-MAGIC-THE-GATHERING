@@ -480,7 +480,11 @@ class GameLifecycle:
 
         while not self._game_over.is_set():
 
+            needs_broadcast = (gs.priority_holder != ap_id)
             gs.priority_holder = ap_id
+
+            if needs_broadcast:
+                await self._broadcast_game_state(gs)
 
             try:
                 both_passed, action = await self.priority_mgr.run_priority_window(

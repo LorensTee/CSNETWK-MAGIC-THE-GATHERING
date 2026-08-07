@@ -127,35 +127,37 @@ def can_pay(
     simple enough that this works.
     """
     cost = parse_cost(mana_cost)
+    pool_copy = {c: getattr(mana_pool, c) for c in COLOUR_KEYS}
 
-    # 1. Check colour-specific pips.
-    colour_total_needed = 0
-    for colour, needed in cost.colours.items():
-        if needed <= 0:
-            continue
-        offered = mana_payment.get(colour, 0)
-        if offered < needed:
-            return False
-        pool_available = getattr(mana_pool, colour, 0)
-        if pool_available < offered:
-            return False
-        colour_total_needed += needed
+    # If the client sent "X" in the payment, they are asking the server to 
+    # auto-assign floating mana to cover the generic cost (Lazy Payment).
+    if "X" in mana_payment:
+        # 1. Verify they have the required specific colored pips
+        for colour, needed in cost.colours.items():
+            if pool_copy[colour] < needed:
+                return False
+            pool_copy[colour] -= needed
+            
+        # 2. Verify the remaining floating mana can cover the generic cost
+        leftover_floating = sum(pool_copy.values())
+        return leftover_floating >= cost.generic
 
-    # 2. Generic mana: can come from any colour or colourless.
-    payment_total = sum(mana_payment.values())
-    payment_colourless = mana_payment.get("C", 0)
-    # Coloured payment after covering colour pips
-    coloured_after_pips = sum(
-        mana_payment.get(c, 0) - cost.colours.get(c, 0)
-        for c in mana_payment
-        if c in COLOUR_KEYS
-    )
-    # Generic can come from the leftover coloured mana or colourless mana
-    available_for_generic = coloured_after_pips + payment_colourless
-    if available_for_generic < cost.generic:
-        return False
-
-    return True
+    # For Explicit Payments (Client says exactly which mana they are spending, e.g. G:1, R:1)
+    else:
+        # 1. Security Check: Does the pool ACTUALLY have the mana they claim to pay?
+        for colour, amount in mana_payment.items():
+            if colour not in pool_copy or pool_copy[colour] < amount:
+                return False
+                
+        # 2. Does the payment cover the specific pips?
+        for colour, needed in cost.colours.items():
+            if mana_payment.get(colour, 0) < needed:
+                return False
+                
+        # 3. Is the total payment enough to cover the total cost?
+        total_paid = sum(mana_payment.values())
+        total_needed = cost.generic + sum(cost.colours.values())
+        return total_paid >= total_needed
 
 
 def deduct_mana(payment: dict[str, int], pool: ManaPool) -> ManaPool:
@@ -168,15 +170,42 @@ def deduct_mana(payment: dict[str, int], pool: ManaPool) -> ManaPool:
         W=pool.W, U=pool.U, B=pool.B,
         R=pool.R, G=pool.G, C=pool.C,
     )
-    for colour, amount in payment.items():
-        if amount <= 0:
-            continue
-        current = getattr(new_pool, colour, 0)
-        if current < amount:
-            raise ValueError(
-                f"Not enough {colour} mana: have {current}, need {amount}"
-            )
-        setattr(new_pool, colour, current - amount)
+
+    if "X" in payment:
+        # Auto-deduct for lazy clients
+        # First, pay the specific colors required
+        for colour, amount in payment.items():
+            if colour == "X" or amount <= 0:
+                continue
+            current = getattr(new_pool, colour, 0)
+            if current < amount:
+                raise ValueError(f"Not enough {colour} mana")
+            setattr(new_pool, colour, current - amount)
+            
+        # Second, drain remaining floating mana to cover X
+        x_needed = payment["X"]
+        for colour in COLOUR_KEYS:
+            if x_needed <= 0:
+                break
+            current = getattr(new_pool, colour, 0)
+            if current > 0:
+                drain = min(current, x_needed)
+                setattr(new_pool, colour, current - drain)
+                x_needed -= drain
+                
+        if x_needed > 0:
+            raise ValueError("Not enough total mana to cover generic cost")
+            
+    else:
+        # Standard deduction for explicit payments
+        for colour, amount in payment.items():
+            if amount <= 0: 
+                continue
+            current = getattr(new_pool, colour, 0)
+            if current < amount:
+                raise ValueError(f"Not enough {colour} mana")
+            setattr(new_pool, colour, current - amount)
+            
     return new_pool
 
 

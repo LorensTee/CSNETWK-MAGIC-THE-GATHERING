@@ -171,7 +171,41 @@ class InputHandler:
             return None
 
         card_id = hand[idx]
-        targets: list[str] = [args[1]] if len(args) > 1 else []
+        targets: list[str] = []
+
+        if len(args) > 1:
+            target_str = args[1]
+            
+            # If the user typed a number (e.g., "2"), translate it!
+            if target_str.isdigit():
+                t_idx = int(target_str) - 1
+                
+                # Pull the battlefield from the state
+                vs = self.client.visible_state
+                my_id = vs.get("viewer_id")
+                opp_id = vs.get("opponent_id")
+                
+                # Gather all permanents in the same order your UI prints them.
+                # (usually opponent first, then yours)
+                all_perms = []
+                for pid in [opp_id, my_id]:
+                    if pid:
+                        all_perms.extend(vs.get("battlefield", {}).get(pid, []))
+                
+                if 0 <= t_idx < len(all_perms):
+                    # Grab the actual permanent ID string
+                    target_perm = all_perms[t_idx]
+                    # Note: Adjust the key ("id", "permanent_id", etc.) based on what 
+                    # serialize_permanent() outputs in your codebase!
+                    real_id = target_perm.get("id", target_perm.get("permanent_id", target_perm.get("card_id")))
+                    targets.append(real_id)
+                else:
+                    print(f"Invalid target index: {target_str}")
+                    return None
+            else:
+                # If they didn't type a number, assume they typed the literal ID
+                # (e.g., "player_2" to hit the opponent's face with a Lightning Bolt)
+                targets.append(target_str)
 
         card_def = self.card_loader.get_card(card_id)
         if not card_def:
