@@ -255,11 +255,11 @@ class Renderer:
             "DECLARE_ATTACKERS": "attack <N> <target>  |  no attacks  |  pass",
             "DECLARE_BLOCKERS": "block <N> <attacker_N>  |  no blocks  |  pass",
             "ASSIGN_DAMAGE_ORDER": "order <attacker_N> <blocker1> [blocker2...]",
-            "DRAW": "pass  |  cast <N> [target]  |  concede",
-            "UPKEEP": "pass  |  cast <N> [target]  |  concede",
-            "END_STEP": "pass  |  cast <N> [target]  |  concede",
-            "END_OF_COMBAT": "pass  |  cast <N> [target]  |  concede",
-            "BEGIN_COMBAT": "pass  |  cast <N> [target]  |  concede",
+            "DRAW": "pass  |  activate <N> <a> [t]  |  concede",
+            "UPKEEP": "pass  |  activate <N> <a> [t]  |  concede",
+            "END_STEP": "pass  |  activate <N> <a> [t]  |  concede",
+            "END_OF_COMBAT": "pass  |  activate <N> <a> [t]  |  concede",
+            "BEGIN_COMBAT": "pass  |  activate <N> <a> [t]  |  concede",
             "CLEANUP": "discard <N1> [N2...]  |  pass",
         }
         return f"Commands: {prompts.get(phase, 'pass  |  cast <N> [target]  |  concede  |  help')}"

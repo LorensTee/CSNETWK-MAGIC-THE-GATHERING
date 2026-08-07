@@ -148,6 +148,7 @@ class PriorityManager:
         nap_id: str,
         *,
         read_pdu: ReadPduCb | None = None,
+        on_ap_pass_cb: Any = None,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Run one full priority window (AP → NAP).
 
@@ -174,6 +175,9 @@ class PriorityManager:
         )
         if ap_response is not None and ap_response.get("type") != "PRIORITY_PASS":
             return False, ap_response
+
+        if on_ap_pass_cb:
+            await on_ap_pass_cb()
 
         nap_response = await self.grant_priority(
             nap_conn, nap_id, read_pdu=read_pdu,

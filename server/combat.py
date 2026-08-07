@@ -67,20 +67,37 @@ class CombatManager:
         for entry in attackers:
             cid = entry["creature_id"]
             target = entry["target"]
+
+            perm = self._find_permanent(gs, player, cid)
+
+            if not perm:
+                continue
+
+            if perm.tapped:
+                print(f"⚠️ [Combat] Rejected {cid}: Already tapped!")
+                continue
+
+            if getattr(perm, "summoning_sick", False):
+                print(f"⚠️ [Combat] Rejected {cid}: Summoning sickness!")
+                continue
+
+            if not hasattr(perm, 'power') or perm.power is None:
+                print(f"⚠️ [Combat] Rejected {cid}: Not a creature!")
+                continue
+
+            # ✅ SAFE TO ADD NOW!
             self.attackers[cid] = target
             self._attacking_creatures.add(cid)
 
-            # Tap the creature (unless it has vigilance).
-            perm = self._find_permanent(gs, player, cid)
-            if perm and not perm.tapped:
-                # Check vigilance via abilities.
-                has_vigilance = any(
-                    a.get("type") == "keyword" and a.get("name") == "vigilance"
-                    for a in getattr(perm, "abilities", [])
-                )
-                if not has_vigilance:
-                    perm.tapped = True
-                    changes.append({"change_type": "TAP", "target": cid})
+            # Check vigilance via abilities and tap if needed.
+            has_vigilance = any(
+                a.get("type") == "keyword" and a.get("name") == "vigilance"
+                for a in getattr(perm, "abilities", [])
+            )
+            
+            if not has_vigilance:
+                perm.tapped = True
+                changes.append({"change_type": "TAP", "target": cid})
 
         return changes
 

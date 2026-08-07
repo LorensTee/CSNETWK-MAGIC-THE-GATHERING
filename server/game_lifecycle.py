@@ -333,6 +333,11 @@ class GameLifecycle:
         """Called by TurnEngine for each non-auto phase."""
         gs.phase = phase
 
+        if phase == "DECLARE_BLOCKERS":
+            gs.priority_holder = nap_id
+        else:
+            gs.priority_holder = ap_id
+
         # Broadcast a GAME_STATE_UPDATE first.
         for pid in gs.player_ids:
             vs = build_visible_state(gs, pid)
@@ -468,13 +473,22 @@ class GameLifecycle:
     ) -> None:
         """Loop priority windows until both pass on empty stack (advance)
         or both pass on non-empty stack (resolve top)."""
+
+        async def flip_to_nap():
+            gs.priority_holder = nap_id
+            await self._broadcast_game_state(gs)
+
         while not self._game_over.is_set():
+
+            gs.priority_holder = ap_id
+
             try:
                 both_passed, action = await self.priority_mgr.run_priority_window(
                     self._connection_for(ap_id),
                     self._connection_for(nap_id),
                     ap_id, nap_id,
                     read_pdu=self.wait_for_pdu,
+                    on_ap_pass_cb=flip_to_nap,
                 )
             except PriorityTimeout as exc:
                 winner = nap_id if exc.player_id == ap_id else ap_id
