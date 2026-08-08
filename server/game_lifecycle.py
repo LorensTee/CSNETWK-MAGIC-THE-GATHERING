@@ -54,6 +54,7 @@ from shared.pdus import (
     parse_and_validate,
 )
 
+from server.stack import check_state_based_actions
 
 class GameLifecycle:
     """The game lifecycle state machine.
@@ -359,10 +360,7 @@ class GameLifecycle:
                 attackers = action.get("attackers", [])
                 self.combat_mgr.set_attackers(gs, ap_id, attackers)
                 
-                # --- ADD THIS: Force the UI to update so you can see the creatures tap! ---
-                # (Note: Change this to whatever your broadcast function is actually called, 
-                # like self.broadcast_state(gs) or self.send_game_state_update(gs))
-                # await self.broadcast_game_state(gs) 
+            await self._broadcast_game_state(gs) 
                 
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
@@ -379,8 +377,7 @@ class GameLifecycle:
                 blockers = action.get("blockers", [])
                 self.combat_mgr.set_blockers(gs, nap_id, blockers)
                 
-                # --- Force the UI to update to show blockers! ---
-                # await self.broadcast_game_state(gs)
+            await self._broadcast_game_state(gs)
                 
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
@@ -427,9 +424,20 @@ class GameLifecycle:
             return
 
         if phase == "COMBAT_DAMAGE":
+            # 1. Do the damage math
             result = self.combat_mgr.compute_combat_damage(gs)
+            
+            # 2. Run the sweep (mutates `gs` by moving dead creatures to graveyard)
+            check_state_based_actions(gs, self._card_loader)
+            
+            # 3. Broadcast the combat results (like damage numbers)
             await self._broadcast_combat_result(gs, result)
+            
+            # 4. Broadcast the FULL updated game state to update the clients' UI!
+            await self._broadcast_game_state(gs)
+            
             self.combat_mgr.reset()
+            
             # Priority window after combat damage.
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
@@ -494,6 +502,12 @@ class GameLifecycle:
 
         while not self._game_over.is_set():
 
+            sba_changes = check_state_based_actions(gs, self.card_loader)
+            if sba_changes:
+                await self._broadcast_game_state(gs)
+                if self._check_game_over(gs):
+                    return
+                
             needs_broadcast = (gs.priority_holder != ap_id)
             gs.priority_holder = ap_id
 

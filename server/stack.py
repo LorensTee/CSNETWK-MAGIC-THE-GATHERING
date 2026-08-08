@@ -17,6 +17,40 @@ from typing import Any
 from server.card_effects import resolve_effect
 from server.game_state import GameState, StackItem
 
+def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
+    """Sweep the board for creatures with lethal damage and destroy them."""
+    sba_changes = []
+    
+    for player_id, perms in gs.battlefield.items():
+        dead_perms = []
+        for perm in perms:
+            # We need the loader to know the creature's toughness
+            if card_loader is None:
+                continue
+                
+            card_def = card_loader.get_card(perm["id"])
+            if card_def and "Creature" in card_def.card_type:
+                # Check if damage meets or exceeds toughness
+                damage = perm.get("damage", 0)
+                if damage >= card_def.toughness:
+                    dead_perms.append(perm)
+                    
+        # Move the dead creatures to the graveyard
+        for dead_perm in dead_perms:
+            gs.battlefield[player_id].remove(dead_perm)
+            gs.graveyard[player_id].append(dead_perm["id"])
+            
+            # Log the change so the clients see the creature explode
+            sba_changes.append({
+                "type": "ZONE_CHANGE",
+                "object_id": dead_perm["id"],
+                "from_zone": "battlefield",
+                "to_zone": "graveyard",
+                "controller": player_id
+            })
+            print(f"--- [SERVER] SBA: {dead_perm['id']} died from lethal damage!")
+            
+    return sba_changes
 
 class StackManager:
     """Manages the stack for a single game session.
@@ -74,12 +108,12 @@ class StackManager:
         if card_def is not None:
             self._card_def_cache[stack_item.stack_item_id] = card_def
         return stack_item
-
+    
     def resolve_top(
-        self,
-        gs: GameState,
-        card_loader: Any = None,
-    ) -> tuple[str, list[dict[str, Any]]]:
+            self,
+            gs,
+            card_loader: Any = None,
+        ) -> tuple[str, list[dict[str, Any]]]:
         """Pop the top item from the stack and resolve it.
 
         Parameters
@@ -104,9 +138,7 @@ class StackManager:
         item = gs.stack.pop()
         card_def = item.card_def or self._card_def_cache.get(item.stack_item_id)
 
-        # Determine if the item fizzles: all targets are illegal.
-        # For now we assume targets are valid (full fizzle logic is in
-        # the game lifecycle).
+        # Determine if the item fizzles
         fizzle = self._check_fizzle(gs, item)
         if fizzle:
             return "FIZZLE", []
@@ -122,11 +154,11 @@ class StackManager:
         if card_def is not None:
             base_id = getattr(card_def, "card_id_base", "")
             if not base_id:
-                # Derive from source (e.g. "lightning_bolt_001" → "lightning_bolt").
                 base_id = item.source.rsplit("_", 1)[0] if "_" in item.source else item.source
         else:
             base_id = item.source.rsplit("_", 1)[0] if "_" in item.source else item.source
 
+        # 1. Cast the spell and do the math
         state_changes = resolve_effect(
             gs,
             base_id,
@@ -134,6 +166,12 @@ class StackManager:
             item.targets,
             extra=extra,
         )
+
+        # 2. RUN THE SWEEP! Check if anything died from the math
+        sba_changes = check_state_based_actions(gs, card_loader)
+        
+        # 3. Combine the spell's changes with the death changes
+        state_changes.extend(sba_changes)
 
         return "RESOLVED", state_changes
 
