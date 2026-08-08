@@ -418,7 +418,13 @@ class GameLifecycle:
 
         if phase == "FIRST_STRIKE_DAMAGE":
             result = self.combat_mgr.compute_first_strike_damage(gs)
+            
+            check_state_based_actions(gs, self.card_loader)
+            
             await self._broadcast_combat_result(gs, result)
+            
+            await self._broadcast_game_state(gs)
+
             # Priority window after first strike damage.
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
@@ -428,7 +434,7 @@ class GameLifecycle:
             result = self.combat_mgr.compute_combat_damage(gs)
             
             # 2. Run the sweep (mutates `gs` by moving dead creatures to graveyard)
-            check_state_based_actions(gs, self._card_loader)
+            check_state_based_actions(gs, self.card_loader)
             
             # 3. Broadcast the combat results (like damage numbers)
             await self._broadcast_combat_result(gs, result)

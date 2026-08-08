@@ -21,35 +21,67 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
     """Sweep the board for creatures with lethal damage and destroy them."""
     sba_changes = []
     
-    for player_id, perms in gs.battlefield.items():
-        dead_perms = []
-        for perm in perms:
-            # We need the loader to know the creature's toughness
-            if card_loader is None:
-                continue
-                
-            card_def = card_loader.get_card(perm["id"])
-            if card_def and "Creature" in card_def.card_type:
-                # Check if damage meets or exceeds toughness
-                damage = perm.get("damage", 0)
-                if damage >= card_def.toughness:
-                    dead_perms.append(perm)
+    try:
+        for player_id, perms in gs.battlefield.items():
+            dead_perms = []
+            for perm in perms:
+                if card_loader is None:
+                    continue
                     
-        # Move the dead creatures to the graveyard
-        for dead_perm in dead_perms:
-            gs.battlefield[player_id].remove(dead_perm)
-            gs.graveyard[player_id].append(dead_perm["id"])
-            
-            # Log the change so the clients see the creature explode
-            sba_changes.append({
-                "type": "ZONE_CHANGE",
-                "object_id": dead_perm["id"],
-                "from_zone": "battlefield",
-                "to_zone": "graveyard",
-                "controller": player_id
-            })
-            print(f"--- [SERVER] SBA: {dead_perm['id']} died from lethal damage!")
-            
+                # SAFELY get the ID from the Permanent object
+                # (We check common names: instance_id, id, or card_id)
+                perm_id = getattr(perm, "instance_id", None) or getattr(perm, "id", None) or getattr(perm, "card_id", None)
+                
+                # If we still can't find an ID, skip it
+                if not perm_id:
+                    continue
+                    
+                # To look up the card definition, we usually need the base name 
+                # (e.g. "mountain" instead of "mountain_005")
+                base_id = perm_id.rsplit("_", 1)[0] if "_" in perm_id else perm_id
+                
+                card_def = card_loader.get_card(base_id)
+                
+                # Safely check if it's a creature
+                if card_def and hasattr(card_def, 'card_type') and "Creature" in card_def.card_type:
+                    # Get damage from the Permanent object
+                    damage = getattr(perm, "damage", 0)
+                    toughness = getattr(card_def, 'toughness', 0)
+                    
+                    if damage >= toughness and toughness > 0:
+                        dead_perms.append(perm)
+                        
+            # Move the dead creatures to the graveyard
+            for dead_perm in dead_perms:
+                # 1. Remove from battlefield
+                gs.battlefield[player_id].remove(dead_perm)
+                
+                # 2. Get the unique instance ID for the network packet
+                dead_id = getattr(dead_perm, "instance_id", None) or getattr(dead_perm, "id", None) or getattr(dead_perm, "card_id", None)
+                
+                # --- THE FIX: Strip the _001 suffix to get the raw card name! ---
+                base_id = dead_id.rsplit("_", 1)[0] if "_" in dead_id else dead_id
+                
+                # 3. Append the raw card name to the graveyard so the UI can read it
+                gs.graveyard[player_id].append(base_id)
+                # ----------------------------------------------------------------
+                
+                sba_changes.append({
+                    "type": "ZONE_CHANGE",
+                    "object_id": dead_id,
+                    "from_zone": "battlefield",
+                    "to_zone": "graveyard",
+                    "controller": player_id
+                })
+                print(f"--- [SERVER] SBA: {dead_id} died and {base_id} was sent to graveyard!")
+                
+    except Exception as e:
+        import traceback
+        print("\n" + "!"*50)
+        print("💥 CRASH IN STATE BASED ACTIONS 💥")
+        traceback.print_exc()
+        print("!"*50 + "\n")
+        
     return sba_changes
 
 class StackManager:
