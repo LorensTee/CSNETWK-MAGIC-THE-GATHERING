@@ -117,9 +117,11 @@ def validate_cast_spell(
 
     # 4. Full mana validation.
     if not can_pay(mana_payment, card_def.mana_cost, state.mana_pool):
+        # Dynamically fetch the player's actual pool for the error output
+        current_pool = state.mana_pool.get(player, {}) if isinstance(state.mana_pool, dict) else state.mana_pool
         return False, "INSUFFICIENT_MANA", (
-            f"Mana payment {mana_payment} does not satisfy "
-            f"cost {card_def.mana_cost}."
+            f"Insufficient mana. Spell requires {card_def.mana_cost}, "
+            f"but your available pool is {current_pool}."
         )
 
     # 5. Target validation based on card effect text.

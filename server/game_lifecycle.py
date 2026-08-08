@@ -346,15 +346,24 @@ class GameLifecycle:
 
         # ── Combat sub-steps ─────────────────────────────────────────────
         if phase == "DECLARE_ATTACKERS":
+            # Let the priority manager handle the UI prompt properly!
             both, action = await self.priority_mgr.run_priority_window(
                 self._connection_for(ap_id),
                 self._connection_for(nap_id),
                 ap_id, nap_id,
                 read_pdu=self.wait_for_pdu,
             )
+            
+            # If they typed "attack ..." or "no attacks", this catches it!
             if action and action.get("type") == "DECLARE_ATTACKERS":
                 attackers = action.get("attackers", [])
                 self.combat_mgr.set_attackers(gs, ap_id, attackers)
+                
+                # --- ADD THIS: Force the UI to update so you can see the creatures tap! ---
+                # (Note: Change this to whatever your broadcast function is actually called, 
+                # like self.broadcast_state(gs) or self.send_game_state_update(gs))
+                # await self.broadcast_game_state(gs) 
+                
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
 
@@ -365,9 +374,14 @@ class GameLifecycle:
                 nap_id, ap_id,
                 read_pdu=self.wait_for_pdu,
             )
+            
             if action and action.get("type") == "DECLARE_BLOCKERS":
                 blockers = action.get("blockers", [])
                 self.combat_mgr.set_blockers(gs, nap_id, blockers)
+                
+                # --- Force the UI to update to show blockers! ---
+                # await self.broadcast_game_state(gs)
+                
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
 
