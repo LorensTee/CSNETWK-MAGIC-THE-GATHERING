@@ -86,6 +86,167 @@ def _add_mana(controller: str, mana: dict[str, int]) -> dict[str, Any]:
     return {"change_type": "ADD_MANA", "player": controller, "mana": mana}
 
 
+
+# ── Effect Helper Functions ───────────────────────────────────────────
+
+def _apply_damage(gs: GameState, target: str, damage_amount: int) -> None:
+    """Helper to physically mutate the GameState for damage effects."""
+    if target in gs.life_totals:
+        gs.life_totals[target] -= damage_amount
+    else:
+        for perms in gs.battlefield.values():
+            for perm in perms:
+                if perm.id == target:
+                    perm.damage = getattr(perm, "damage", 0) + damage_amount
+                    return
+
+def _apply_counter(gs: GameState, target_stack_id: str) -> None:
+    """Helper to physically remove a countered spell from the stack."""
+    for i, item in enumerate(gs.stack):
+        if item.stack_item_id == target_stack_id:
+            # Rip it off the stack! 
+            # (If your engine tracks graveyards, you could also append item.source to gs.graveyard here)
+            gs.stack.pop(i)
+            break
+
+def _apply_bounce(gs: GameState, target_id: str) -> None:
+    """Helper to physically move a permanent from the battlefield to its owner's hand."""
+    for player_id, perms in gs.battlefield.items():
+        for i, perm in enumerate(perms):
+            if perm.id == target_id:
+                # Rip it off the battlefield!
+                popped_perm = perms.pop(i)
+                
+                # Figure out the base card ID (e.g., stripping the unique "_004" suffix)
+                # so the hand gets the raw card back.
+                card_id = getattr(popped_perm, "card_id", target_id.rsplit("_", 1)[0])
+                
+                # Append it back to the player's hand
+                if player_id not in gs.hands:
+                    gs.hands[player_id] = []
+                gs.hands[player_id].append(card_id)
+                return
+
+def _apply_draw(gs: GameState, player_id: str, amount: int = 1) -> None:
+    """Helper to physically draw cards from the library to the hand."""
+    for _ in range(amount):
+        # Make sure they actually have a deck left!
+        if player_id in gs.libraries and gs.libraries[player_id]:
+            # Use pop() to draw from the "top" (end of the list)
+            drawn_card = gs.libraries[player_id].pop() 
+            
+            if player_id not in gs.hands:
+                gs.hands[player_id] = []
+            gs.hands[player_id].append(drawn_card)
+
+def _apply_pump(gs: GameState, target_id: str, power_bonus: int, toughness_bonus: int) -> None:
+    """Helper to add temporary stats to a creature."""
+    for perms in gs.battlefield.values():
+        for perm in perms:
+            if perm.id == target_id:
+                perm.temp_power = getattr(perm, "temp_power", 0) + power_bonus
+                perm.temp_toughness = getattr(perm, "temp_toughness", 0) + toughness_bonus
+                return
+
+def _apply_destroy(gs: GameState, target_id: str) -> None:
+    """Helper to move a permanent from the battlefield to the graveyard."""
+    for player_id, perms in gs.battlefield.items():
+        for i, perm in enumerate(perms):
+            if perm.id == target_id:
+                popped = perms.pop(i)
+                card_id = getattr(popped, "card_id", target_id.rsplit("_", 1)[0])
+                
+                if not hasattr(gs, "graveyards"):
+                    gs.graveyards = {}
+                if player_id not in gs.graveyards:
+                    gs.graveyards[player_id] = []
+                    
+                gs.graveyards[player_id].append(card_id)
+                return
+
+def _apply_add_mana(gs: GameState, player_id: str, mana_dict: dict[str, int]) -> None:
+    """Helper to add floating mana directly to a player's pool."""
+    pool = gs.mana_pools.get(player_id)
+    if pool:
+        for color, amount in mana_dict.items():
+            current = getattr(pool, color, 0)
+            setattr(pool, color, current + amount)
+
+def _apply_raise_dead(gs: GameState, player_id: str, target_card_id: str) -> None:
+    """Helper to move a card from the graveyard to the hand."""
+    gy = gs.graveyards.get(player_id, [])
+    if target_card_id in gy:
+        gy.remove(target_card_id)
+        if player_id not in gs.hands:
+            gs.hands[player_id] = []
+        gs.hands[player_id].append(target_card_id)
+
+def _apply_life_change(gs: GameState, player_id: str, amount: int) -> None:
+    """Helper to modify a player's life total (positive for gain, negative for loss)."""
+    if player_id in gs.life_totals:
+        gs.life_totals[player_id] += amount
+
+def _apply_exile(gs: GameState, target_id: str) -> None:
+    """Helper to move a permanent from the battlefield to the exile zone."""
+    for player_id, perms in gs.battlefield.items():
+        for i, perm in enumerate(perms):
+            if perm.id == target_id:
+                popped = perms.pop(i)
+                card_id = getattr(popped, "card_id", target_id.rsplit("_", 1)[0])
+                
+                if not hasattr(gs, "exile"):
+                    gs.exile = {}
+                if player_id not in gs.exile:
+                    gs.exile[player_id] = []
+                    
+                gs.exile[player_id].append(card_id)
+                return
+
+def _apply_enchant(gs: GameState, target_id: str, aura_name: str) -> None:
+    """Helper to attach an aura flag to a permanent."""
+    for perms in gs.battlefield.values():
+        for perm in perms:
+            if perm.id == target_id:
+                # Add an auras list to the permanent if it doesn't have one
+                if not hasattr(perm, "auras"):
+                    perm.auras = []
+                perm.auras.append(aura_name)
+                return
+
+def _apply_spawn_permanent(gs, controller: str, card_id: str, card_loader: Any = None, enters_tapped: bool = False) -> None:
+    """Universal helper to construct and place a Permanent onto the battlefield."""
+    power, toughness = 0, 0
+    haste = False
+    def_id = card_id
+    
+    if card_loader:
+        base_id = card_id.rsplit("_", 1)[0] if "_" in card_id else card_id
+        cd = card_loader.get_card(base_id)
+        if cd:
+            power = cd.power if getattr(cd, 'power', None) is not None else 0
+            toughness = cd.toughness if getattr(cd, 'toughness', None) is not None else 0
+            def_id = getattr(cd, 'card_id_base', base_id)
+            
+            # Check if abilities list contains Haste
+            if any(ab.get("name") == "haste" for ab in cd.abilities):
+                haste = True
+
+    # Construct the Permanent object
+    from server.game_state import Permanent  # Adjust if Permanent is in a different file!
+    perm = Permanent(
+        id=card_id,
+        card_def_id=def_id,
+        controller=controller,
+        tapped=enters_tapped,
+        power=power,
+        toughness=toughness,
+        summoning_sick=not haste, # Haste skips summoning sickness!
+    )
+    
+    # Actually put it on the board!
+    gs.battlefield.setdefault(controller, []).append(perm)
+    
+
 # ── Effect handler implementations ───────────────────────────────────────────
 
 
@@ -99,6 +260,7 @@ def _effect_lightning_bolt(
     """Lightning Bolt deals 3 damage to any target."""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
@@ -112,8 +274,8 @@ def _effect_shock(
     """Shock deals 2 damage to any target."""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 2)
     return [_damage(targets[0], 2)]
-
 
 def _effect_lava_spike(
     gs: GameState,
@@ -125,6 +287,7 @@ def _effect_lava_spike(
     """Lava Spike deals 3 damage to target player."""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
@@ -138,6 +301,7 @@ def _effect_flame_slash(
     """Flame Slash deals 4 damage to target creature."""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 4)
     return [_damage(targets[0], 4)]
 
 
@@ -151,6 +315,7 @@ def _effect_searing_spear(
     """Searing Spear deals 3 damage to any target."""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
@@ -165,6 +330,7 @@ def _effect_skullcrack(
     is tracked as a state flag; for MTGNP 1.0 we just deal damage.)"""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
@@ -179,6 +345,7 @@ def _effect_rift_bolt(
     in MTGNP 1.0, so this resolves like a sorcery.)"""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
@@ -193,6 +360,7 @@ def _effect_incinerate(
     is not tracked separately in MTGNP 1.0.)"""
     if not targets:
         return []
+    _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
@@ -206,6 +374,7 @@ def _effect_counterspell(
     """Counter target spell."""
     if not targets:
         return []
+    _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
@@ -219,6 +388,7 @@ def _effect_cancel(
     """Cancel — counter target spell."""
     if not targets:
         return []
+    _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
@@ -232,6 +402,7 @@ def _effect_negate(
     """Negate — counter target noncreature spell."""
     if not targets:
         return []
+    _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
@@ -246,6 +417,7 @@ def _effect_mana_leak(
     For MTGNP 1.0, the counter always resolves (simplified)."""
     if not targets:
         return []
+    _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
@@ -259,6 +431,7 @@ def _effect_unsummon(
     """Return target creature to its owner's hand."""
     if not targets:
         return []
+    _apply_bounce(gs, targets[0])
     return [_return_to_hand(targets[0])]
 
 
@@ -270,6 +443,7 @@ def _effect_ponder(
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Ponder — look at top 3, shuffle (optional), draw.  Simplified: draw 1."""
+    _apply_draw(gs, controller, 1)
     return [_draw(controller, 1)]
 
 
@@ -283,6 +457,7 @@ def _effect_giant_growth(
     """Giant Growth — target creature gets +3/+3 until end of turn."""
     if not targets:
         return []
+    _apply_pump(gs, targets[0], 3, 3)
     return [_pump(targets[0], 3, 3)]
 
 
@@ -297,13 +472,17 @@ def _effect_rampant_growth(
     Picks the first basic land found in the controller's library."""
     lib = gs.libraries.get(controller, [])
     for card_id in lib:
-        # Basic lands are: plains, island, swamp, mountain, forest.
         card_lower = card_id.lower()
         if any(basic in card_lower for basic in ("plains_", "island_", "swamp_", "mountain_", "forest_")):
             lib.remove(card_id)
+            # Pass enters_tapped=True to our new helper!
+            _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"), enters_tapped=True)
             return [_permanent_enters(card_id, controller, tapped=True)]
-    # Fallback: create a Forest if no basics found.
-    return [_permanent_enters("forest_001", controller, tapped=True)]
+            
+    # Fallback if no basic found
+    fallback_id = "forest_001"
+    _apply_spawn_permanent(gs, controller, fallback_id, extra.get("card_loader"), enters_tapped=True)
+    return [_permanent_enters(fallback_id, controller, tapped=True)]
 
 
 def _effect_naturalize(
@@ -316,6 +495,7 @@ def _effect_naturalize(
     """Destroy target artifact or enchantment."""
     if not targets:
         return []
+    _apply_destroy(gs, targets[0])
     return [_destroy(targets[0])]
 
 
@@ -329,6 +509,7 @@ def _effect_vines_of_vastwood(
     """Vines of Vastwood — target +4/+4 if kicked. Simplified: always kick."""
     if not targets:
         return []
+    _apply_pump(gs, targets[0], 4, 4)
     return [_pump(targets[0], 4, 4)]
 
 
@@ -340,6 +521,7 @@ def _effect_dark_ritual(
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Add {B}{B}{B}."""
+    _apply_add_mana(gs, controller, {"B": 3})
     return [_add_mana(controller, {"B": 3})]
 
 
@@ -353,6 +535,7 @@ def _effect_terror(
     """Destroy target nonartifact, nonblack creature."""
     if not targets:
         return []
+    _apply_destroy(gs, targets[0])
     return [_destroy(targets[0])]
 
 
@@ -366,6 +549,7 @@ def _effect_doom_blade(
     """Destroy target nonblack creature."""
     if not targets:
         return []
+    _apply_destroy(gs, targets[0])
     return [_destroy(targets[0])]
 
 
@@ -379,6 +563,7 @@ def _effect_raise_dead(
     """Return target creature card from graveyard to hand."""
     if not targets:
         return []
+    _apply_raise_dead(gs, controller, targets[0])
     return [{"change_type": "RETURN_FROM_GRAVEYARD", "target": targets[0]}]
 
 
@@ -409,19 +594,18 @@ def _effect_gray_merchant(
     card_loader = extra.get("card_loader")
     for perm in gs.battlefield.get(controller, []):
         if card_loader is not None:
-            cd = card_loader.get_card(perm.card_def_id)
+            cd = card_loader.get_card(getattr(perm, "card_def_id", perm.card_id))
             if cd is not None and cd.color == "B":
                 devotion += 1
         else:
-            # Fallback: count all permanents if no loader.
             devotion += 1
-    opponent = None
-    for pid in gs.player_ids:
-        if pid != controller:
-            opponent = pid
-            break
+            
+    opponent = next((pid for pid in gs.player_ids if pid != controller), None)
     if opponent is None:
         return []
+        
+    _apply_life_change(gs, opponent, -devotion)
+    _apply_life_change(gs, controller, devotion)
     return [_life_loss(opponent, devotion), _life_gain(controller, devotion)]
 
 
@@ -435,6 +619,7 @@ def _effect_gravedigger(
     """Return target creature card from your graveyard to your hand."""
     if not targets:
         return []
+    _apply_raise_dead(gs, controller, targets[0])
     return [{"change_type": "RETURN_FROM_GRAVEYARD", "target": targets[0]}]
 
 
@@ -448,6 +633,7 @@ def _effect_healing_salve(
     """Healing Salve — target player gains 3 life (Mode 1)."""
     if not targets:
         return []
+    _apply_life_change(gs, targets[0], 3)
     return [_life_gain(targets[0], 3)]
 
 
@@ -462,6 +648,8 @@ def _effect_swords_to_plowshares(
     Simplified: +3 life for the owner."""
     if not targets:
         return []
+    _apply_exile(gs, targets[0])
+    _apply_life_change(gs, controller, 3) 
     return [_exile(targets[0]), _life_gain(controller, 3)]
 
 
@@ -476,6 +664,7 @@ def _effect_path_to_exile(
     Simplified: exile + controller gains a land."""
     if not targets:
         return []
+    _apply_exile(gs, targets[0])
     return [_exile(targets[0])]
 
 
@@ -490,6 +679,7 @@ def _effect_pacifism(
     For MTGNP 1.0, we flag the permanent."""
     if not targets:
         return []
+    _apply_enchant(gs, targets[0], "pacifism")
     return [{"change_type": "ENCHANT", "target": targets[0], "aura": "pacifism"}]
 
 
@@ -502,7 +692,10 @@ def _effect_merfolk_looter(
 ) -> list[dict[str, Any]]:
     """Merfolk Looter — activated ability handled elsewhere.
     When it enters: just a creature."""
-    return [_permanent_enters(extra.get("card_id", "merfolk_looter_001"), controller)]
+    card_id = extra.get("card_id", "black_knight_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_prodigal_sorcerer(
@@ -514,7 +707,9 @@ def _effect_prodigal_sorcerer(
 ) -> list[dict[str, Any]]:
     """Prodigal Sorcerer — tap ability handled elsewhere.
     When it enters: just a creature."""
-    return [_permanent_enters(extra.get("card_id", "prodigal_sorcerer_001"), controller)]
+    card_id = extra.get("card_id", "prodigal_sorcerer_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_sol_ring(
@@ -526,7 +721,9 @@ def _effect_sol_ring(
 ) -> list[dict[str, Any]]:
     """Sol Ring — tap ability produces {C}{C}.
     When it enters: just a permanent."""
-    return [_permanent_enters(extra.get("card_id", "sol_ring_001"), controller)]
+    card_id = extra.get("card_id", "sol_ring_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_millstone(
@@ -538,7 +735,9 @@ def _effect_millstone(
 ) -> list[dict[str, Any]]:
     """Millstone — activated ability: mill 2.
     When it enters: just a permanent."""
-    return [_permanent_enters(extra.get("card_id", "millstone_001"), controller)]
+    card_id = extra.get("card_id", "millstone_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_rod_of_ruin(
@@ -550,7 +749,9 @@ def _effect_rod_of_ruin(
 ) -> list[dict[str, Any]]:
     """Rod of Ruin — activated ability: deal 1 damage.
     When it enters: just a permanent."""
-    return [_permanent_enters(extra.get("card_id", "rod_of_ruin_001"), controller)]
+    card_id = extra.get("card_id", "rod_of_ruin_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_vanilla_creature(
@@ -562,48 +763,9 @@ def _effect_vanilla_creature(
 ) -> list[dict[str, Any]]:
     
     card_id = extra.get("card_id", "")
-    card_loader = extra.get("card_loader")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     
-    # 1. Grab stats and check for Haste
-    power, toughness = 0, 0
-    haste = False
-    def_id = card_id
-    
-    if card_loader:
-        base_id = card_id.rsplit("_", 1)[0] if "_" in card_id else card_id
-        cd = card_loader.get_card(base_id)
-        if cd:
-            power = cd.power if getattr(cd, 'power', None) is not None else 0
-            toughness = cd.toughness if getattr(cd, 'toughness', None) is not None else 0
-            def_id = getattr(cd, 'card_id_base', base_id)
-            
-            # Did the parser find Haste?
-            if any(ab.get("name") == "haste" for ab in cd.abilities):
-                haste = True
-
-    # 2. Construct the Permanent object (Note the summoning_sick logic!)
-    from server.game_state import Permanent  # Adjust import if Permanent is in a models.py file
-    perm = Permanent(
-        id=card_id,
-        card_def_id=def_id,
-        controller=controller,
-        tapped=False,
-        power=power,
-        toughness=toughness,
-        summoning_sick=not haste,  # Haste creatures skip summoning sickness!
-    )
-    
-    # 3. Actually put it on the board!
-    gs.battlefield.setdefault(controller, []).append(perm)
-    print(f"⚔️ SPAWNED {card_id} for {controller} (Haste: {haste})")
-
-    # 4. Return the network message
-    return [{
-        "change_type": "PERMANENT_ENTERS",
-        "card_id": card_id,
-        "controller": controller,
-        "tapped": False,
-    }]
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_vanilla_noncreature(
@@ -614,7 +776,10 @@ def _effect_vanilla_noncreature(
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Handler for non-creature cards with no special effect (e.g. lands)."""
-    return []
+    card_id = extra.get("card_id", "")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_white_knight(
@@ -625,7 +790,10 @@ def _effect_white_knight(
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """White Knight — First strike, Protection from black."""
-    return [_permanent_enters(extra.get("card_id", "white_knight_001"), controller)]
+    card_id = extra.get("card_id", "white_knight_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    
+    return [_permanent_enters(card_id, controller)]
 
 
 def _effect_black_knight(
@@ -636,7 +804,10 @@ def _effect_black_knight(
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Black Knight — First strike, Protection from white."""
-    return [_permanent_enters(extra.get("card_id", "black_knight_001"), controller)]
+    card_id = extra.get("card_id", "black_knight_001")
+    _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
+    
+    return [_permanent_enters(card_id, controller)]
 
 
 # ── Dispatch table ───────────────────────────────────────────────────────────
