@@ -114,6 +114,12 @@ class PriorityManager:
             )
             await conn.send_pdu(grant_pdu)
             expected_seq = conn.seq_num
+            # Record the granted token on the connection so the
+            # dispatcher's stale pre-filter and priority.py's strict
+            # consumption check compare against the SAME value (an
+            # interleaved server broadcast bumps conn.seq_num and would
+            # otherwise ping-pong the retry into a lockout).
+            conn.grant_token = expected_seq
 
             while True:
                 # (Re-)register the waiter: initially before the grant, and

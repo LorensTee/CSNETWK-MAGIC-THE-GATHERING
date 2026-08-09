@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import random
 import sys
-import traceback
 from typing import Any
 
 from server.card_effects import resolve_effect
@@ -71,15 +70,16 @@ class GameOverInterrupt(Exception):
 
 def _retrieve_task_exception(task: "asyncio.Task") -> None:
     """Done-callback: swallow a task's exception so Python does not print
-    'Task exception was never retrieved' for fire-and-forget tasks."""
+    'Task exception was never retrieved' for fire-and-forget tasks.
+
+    Logs only the exception repr — never a traceback, which would leak
+    absolute server paths into the log."""
     if task.cancelled():
         return
     exc = task.exception()
     if exc is not None:
         print(f"[server] fire-and-forget task failed: {exc!r}",
               file=sys.stderr)
-        traceback.print_exception(type(exc), exc, exc.__traceback__,
-                                  file=sys.stderr)
 
 
 class GameLifecycle:
@@ -360,6 +360,9 @@ class GameLifecycle:
             vs = build_visible_state(gs, pid)
             pdu = create_game_state_update(seq_num=0, state=vs)
             await self.send_to(pid, pdu)
+            # Seed the echo-validation baseline from this GSU so even the
+            # FIRST MULLIGAN_CHOICE per player is seq-checked (RFC §5.4).
+            self._mulligan_expected_seq[pid] = self._connection_for(pid).seq_num
 
     async def _run_mulligan(
         self, gs: GameState, conns: list[ServerConnection]
@@ -1254,7 +1257,11 @@ class GameLifecycle:
     async def handle_play_land(
         self, conn: ServerConnection, pdu: dict[str, Any]
     ) -> None:
-        print(f"\n🗑️ GARBAGE CAN ATE IT: {pdu}")
+        # Out-of-window stub (the real land logic runs in the priority
+        # path).  Print identifiers only — never the raw client PDU,
+        # which could inject ANSI/terminal escapes into the log.
+        print(f"[PLAY_LAND] {conn.player_id} tried to play "
+              f"card={pdu.get('card_id')!r} outside a priority window")
         pass
 
     async def handle_declare_attackers(

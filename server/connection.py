@@ -61,6 +61,12 @@ class ServerConnection:
         # game lifecycle).
         self.player_id: str | None = None
 
+        # The seq_num of the most recent PRIORITY_GRANT sent to this
+        # connection (set by PriorityManager.grant_priority).  The
+        # dispatcher compares incoming actions against THIS token, not
+        # the moving conn.seq_num counter.
+        self.grant_token: int | None = None
+
         # Serialise writes so send_pdu is safe from concurrent tasks.
         self._write_lock = asyncio.Lock()
 

@@ -104,6 +104,15 @@ class GameServer:
         """Accept pairs of connections and run game sessions."""
         while True:
             self._connections.clear()
+            # Close any connections left queued from the previous session
+            # (the queue is replaced below — otherwise the queued sockets
+            # would leak until the process exits).
+            while not self._incoming.empty():
+                try:
+                    leaked = self._incoming.get_nowait()
+                    leaked.writer.close()
+                except asyncio.QueueEmpty:
+                    break
             self._incoming = asyncio.Queue()
 
             # Accept exactly two connections.
@@ -193,6 +202,23 @@ class GameServer:
                     f"[CONN] Refusing extra connection from "
                     f"{writer.get_extra_info('peername')}",
                     file=sys.stderr,
+                )
+            writer.close()
+            return
+
+        # Bound the pending queue: while the session waits for its two
+        # players (or a reconnect slot), every new TCP connection lands
+        # here.  Without a cap an attacker can exhaust fds/memory by
+        # opening connections in a loop (each sits queued until the
+        # session ends).  Two slots is enough: one reconnect candidate
+        # plus slack.
+        if self._incoming.qsize() >= 2:
+            if self.config.verbose:
+                print(
+                    f"[CONN] Refusing queued connection from "
+                    f"{writer.get_extra_info('peername')} "
+                    f"(queue full)",
+                    file=__import__("sys").stderr,
                 )
             writer.close()
             return

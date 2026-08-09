@@ -72,7 +72,11 @@ class TestStaleAction:
     def test_stale_action_reissues_grant_with_same_seq(self):
         async def scenario():
             lc = FakeLifecycle()
-            conn = FakeConn("p1", seq_num=16)  # last sent = PRIORITY_GRANT seq 16
+            # Last sent = PRIORITY_GRANT seq 16; the granted token is
+            # recorded on the connection (the dispatcher compares actions
+            # against the token, not the moving seq_num counter).
+            conn = FakeConn("p1", seq_num=16)
+            conn.grant_token = 16
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             lc._pending_pdu["p1"] = future
@@ -101,6 +105,30 @@ class TestStaleAction:
             await dispatch(lc, conn, good)
             assert future.done()
             assert future.result()["seq_num"] == 16
+
+        asyncio.run(scenario())
+
+    def test_retry_with_grant_token_passes_after_interleaved_broadcast(self):
+        """RFC §11.3 retry: the granted token is stable across
+        interleaved server broadcasts — a retry echoing the token must
+        resolve the pending future even though conn.seq_num has advanced
+        (previously the < conn.seq_num pre-filter ping-ponged the retry
+        into a PriorityTimeout lockout)."""
+        async def scenario():
+            lc = FakeLifecycle()
+            conn = FakeConn("p1", seq_num=18)  # interleaved broadcasts
+            conn.grant_token = 16              # ...but the token is 16
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            lc._pending_pdu["p1"] = future
+
+            retry = {"type": "PRIORITY_PASS", "seq_num": 16,
+                     "player_id": "p1"}
+            await dispatch(lc, conn, retry)
+
+            assert lc.errors == []   # not rejected as stale
+            assert future.done()     # priority wait resolved
+            assert future.result() is retry
 
         asyncio.run(scenario())
 

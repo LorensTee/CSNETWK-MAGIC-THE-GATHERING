@@ -111,17 +111,22 @@ async def dispatch(
     # ── 2. Priority-wait path & STALE_ACTION Defense ────────────────────
     if pid and pid in lifecycle._pending_pdu and pdu_type not in ("PING", "PONG"):
         
-        # RUBRIC REQUIREMENT: Server rejects stale seq_nums
-        if client_seq < conn.seq_num:
+        # RUBRIC REQUIREMENT: Server rejects stale seq_nums.  Compare
+        # against the GRANTED token (conn.grant_token), not conn.seq_num:
+        # the latter advances on every server broadcast, so comparing
+        # against it would reject the retry echo of a re-issued grant
+        # (same token) and ping-pong the player into a PriorityTimeout.
+        token_seq = getattr(conn, "grant_token", None)
+        if token_seq is not None and client_seq != token_seq:
             # RFC §11.3: reject with STALE_ACTION and re-issue the CURRENT
             # PRIORITY_GRANT with the same seq_num so the player can retry.
             # The pending future stays alive; a retry with the correct echo
             # still resolves it (no lockout until PriorityTimeout).
-            token_seq = conn.seq_num
             await lifecycle.send_error(
                 conn,
                 "STALE_ACTION",
-                f"Action is stale. PDU seq_num {client_seq} is older than server seq_num {token_seq}.",
+                f"Action is stale. PDU seq_num {client_seq} does not match "
+                f"the granted token {token_seq}.",
                 pdu
             )
             grant_pdu = create_priority_grant(
