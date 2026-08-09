@@ -160,12 +160,14 @@ async def dispatch(
 
     handler_name = _HANDLER_MAP.get(pdu_type)
     if handler_name is None:
-        # Unknown type — send error.
+        # Unknown type — send error.  The type string is client-supplied:
+        # repr-quote it so ANSI/terminal escapes cannot be injected into
+        # the verbose log.
         if pdu_type:
             await lifecycle.send_error(
                 conn,
                 "UNKNOWN_TYPE",
-                f"Unrecognised PDU type '{pdu_type}'.",
+                f"Unrecognised PDU type {pdu_type!r}.",
                 pdu,
             )
         return

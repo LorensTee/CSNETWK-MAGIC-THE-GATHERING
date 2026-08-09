@@ -126,13 +126,14 @@ class ClientConnection:
             raise ConnectionError(f"Receive failed: {exc}") from exc
 
         # Update our echo counter from the server's seq_num — but NOT
-        # from ERROR PDUs: an ERROR echoes the REJECTED action's (older)
-        # seq_num (RFC §10.2.23), so adopting it would regress our counter
-        # and permanently STALE-loop every later action.  Only
+        # from ERROR PDUs (which echo the REJECTED action's older seq,
+        # RFC §10.2.23) nor PONG PDUs (which echo the client's own lower
+        # PING seq): adopting either would regress our counter and
+        # permanently STALE-loop every later action.  Only
         # server-initiated PDUs (GSU, PRIORITY_GRANT, PHASE_TRANSITION,
         # …) carry the current token.
         server_seq = pdu.get("seq_num")
-        if server_seq is not None and pdu.get("type") != "ERROR":
+        if server_seq is not None and pdu.get("type") not in ("ERROR", "PONG"):
             self.seq_num = server_seq
 
         if self.verbose:
