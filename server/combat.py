@@ -217,13 +217,9 @@ class CombatManager:
                     if blocker_perm.damage >= blocker_perm.toughness:
                         creatures_died.append(blocker_id)
 
-                # Trample: remaining damage goes to defending player.
-                if remaining > 0 and self._has_trample(perm):
-                    damage_events.append({
-                        "source": cid,
-                        "target": target,
-                        "amount": remaining,
-                    })
+                # NOTE: MTGNP 1.0 does NOT implement trample (RFC §9.7).
+                # A blocked attacker never deals damage to the defending
+                # player; leftover damage is simply not assigned.
 
         # ── Blocking creatures deal damage to their attackers ────────────
         for b_id, a_id in self.blockers.items():
@@ -293,14 +289,6 @@ class CombatManager:
         """Return ``True`` if the permanent has first strike."""
         return any(
             a.get("type") == "keyword" and a.get("name") == "first_strike"
-            for a in getattr(perm, "abilities", [])
-        )
-
-    @staticmethod
-    def _has_trample(perm: Permanent) -> bool:
-        """Return ``True`` if the permanent has trample."""
-        return any(
-            a.get("type") == "keyword" and a.get("name") == "trample"
             for a in getattr(perm, "abilities", [])
         )
 

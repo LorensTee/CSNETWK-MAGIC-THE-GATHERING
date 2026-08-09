@@ -113,7 +113,13 @@ class TestDamageComputation:
         assert len(fs_events) > 0, "First strike creature should deal damage"
         assert len(nor_events) == 0, "Non-first-strike should NOT damage in FS step"
 
-    def test_trample_overflow(self):
+    def test_blocked_attacker_deals_no_overflow_to_player(self):
+        """Spec §9.7: MTGNP 1.0 does not implement trample.
+
+        A blocked attacker deals its full combat damage to its blocker(s)
+        only — never to the defending player, even with the trample
+        keyword present.
+        """
         gs = _make_gs()
         cm = CombatManager()
         cm.attackers = {"trampler_001": "p2"}
@@ -127,10 +133,15 @@ class TestDamageComputation:
         gs.battlefield["p2"].append(wall)
 
         result = cm.compute_combat_damage(gs)
-        # Trampler deals 2 to wall (lethal), 2 to player (overflow)
-        wall_dmg = [e for e in result["damage_events"]
-                    if e["source"] == "trampler_001" and e["target"] == "wall_001"]
+
+        # NO damage to the defending player (no trample overflow in MTGNP).
         player_dmg = [e for e in result["damage_events"]
                       if e["source"] == "trampler_001" and e["target"] == "p2"]
+        assert player_dmg == []
+        # The blocker takes lethal damage (2), assigned in damage order.
+        wall_dmg = [e for e in result["damage_events"]
+                    if e["source"] == "trampler_001" and e["target"] == "wall_001"]
         assert wall_dmg[0]["amount"] == 2
-        assert player_dmg[0]["amount"] == 2
+        assert "wall_001" in result["creatures_died"]
+        # Life totals unchanged.
+        assert gs.life_totals["p2"] == 20
