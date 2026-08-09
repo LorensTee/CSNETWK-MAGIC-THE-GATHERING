@@ -91,6 +91,21 @@ class ServerConnection:
             self.seq_num += 1
             pdu["seq_num"] = self.seq_num
 
+        await self._write_frame(pdu)
+
+    async def send_pdu_explicit(self, pdu: dict[str, Any], seq_num: int) -> None:
+        """Send a framed PDU with an explicit ``seq_num``, without consuming
+        a counter value.
+
+        Used for (RFC §10.2.23) ERROR PDUs echoing the rejected action's
+        seq_num and (RFC §11.3) re-issued PRIORITY_GRANTs that must carry
+        the *same* token seq_num so the client can retry.
+        """
+        pdu["seq_num"] = seq_num
+        await self._write_frame(pdu)
+
+    async def _write_frame(self, pdu: dict[str, Any]) -> None:
+        """Encode, verbose-log, and write one framed PDU under the write lock."""
         if self.verbose:
             label = f"S→C {self.player_id or '?'}"
             print(format_pdu_sent(label, pdu), file=__import__("sys").stderr)

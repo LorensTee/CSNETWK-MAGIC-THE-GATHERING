@@ -97,17 +97,17 @@ class PriorityManager:
         timeout = timeout_ms if timeout_ms is not None else self.config.time_limit_ms
         timeout_s = timeout / 1000.0
 
-        while True:
-            # 1. Send PRIORITY_GRANT (send_pdu sets seq_num automatically).
-            grant_pdu = create_priority_grant(
-                seq_num=0,  # placeholder — send_pdu overwrites this.
-                player_id=player_id,
-                time_limit_ms=timeout,
-            )
-            await conn.send_pdu(grant_pdu)
-            expected_seq = conn.seq_num
+        # Send the initial PRIORITY_GRANT (send_pdu sets seq_num automatically).
+        grant_pdu = create_priority_grant(
+            seq_num=0,  # placeholder — send_pdu overwrites this.
+            player_id=player_id,
+            time_limit_ms=timeout,
+        )
+        await conn.send_pdu(grant_pdu)
+        expected_seq = conn.seq_num
 
-            # 2. Wait for response with timeout.
+        while True:
+            # Wait for response with timeout.
             try:
                 if read_pdu is not None:
                     response = await asyncio.wait_for(
@@ -122,11 +122,15 @@ class PriorityManager:
             except (ProtocolError, ConnectionError, EOFError, OSError) as exc:
                 raise ConnectionLost(player_id) from exc
 
-            # 3. Validate seq_num.
+            # Validate seq_num.
             actual = response.get("seq_num", -1)
             if not validate_seq_num(expected_seq, actual):
+                # RFC §11.3: reject with STALE_ACTION and re-issue the SAME
+                # token (same seq_num, no counter consumption) so the player
+                # can retry.  The ERROR echoes the rejected action's seq_num
+                # per RFC §10.2.23.
                 err_pdu = create_error(
-                    seq_num=expected_seq,
+                    seq_num=actual,
                     code="STALE_ACTION",
                     message=(
                         f"Priority token mismatch. "
@@ -134,10 +138,16 @@ class PriorityManager:
                     ),
                     rejected_action=response,
                 )
-                await conn.send_pdu(err_pdu)
-                continue  # Re-issue grant.
+                await conn.send_pdu_explicit(err_pdu, actual)
+                grant_pdu = create_priority_grant(
+                    seq_num=expected_seq,
+                    player_id=player_id,
+                    time_limit_ms=timeout,
+                )
+                await conn.send_pdu_explicit(grant_pdu, expected_seq)
+                continue  # Keep waiting on the same token.
 
-            # 4. Return the response.
+            # Return the response.
             return response
 
     async def run_priority_window(

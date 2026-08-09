@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from server.connection import ServerConnection
+from shared.pdus import create_priority_grant
 
 if TYPE_CHECKING:
     from server.game_lifecycle import GameLifecycle
@@ -105,12 +106,23 @@ async def dispatch(
         
         # RUBRIC REQUIREMENT: Server rejects stale seq_nums
         if client_seq < conn.seq_num:
+            # RFC §11.3: reject with STALE_ACTION and re-issue the CURRENT
+            # PRIORITY_GRANT with the same seq_num so the player can retry.
+            # The pending future stays alive; a retry with the correct echo
+            # still resolves it (no lockout until PriorityTimeout).
+            token_seq = conn.seq_num
             await lifecycle.send_error(
                 conn,
                 "STALE_ACTION",
-                f"Action is stale. PDU seq_num {client_seq} is older than server seq_num {conn.seq_num}.",
+                f"Action is stale. PDU seq_num {client_seq} is older than server seq_num {token_seq}.",
                 pdu
             )
+            grant_pdu = create_priority_grant(
+                seq_num=token_seq,
+                player_id=pid,
+                time_limit_ms=lifecycle.config.time_limit_ms,
+            )
+            await conn.send_pdu_explicit(grant_pdu, token_seq)
             return
 
         future = lifecycle._pending_pdu.pop(pid)

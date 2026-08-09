@@ -994,12 +994,21 @@ class GameLifecycle:
         message: str,
         rejected_action: dict[str, Any],
     ) -> None:
-        """Send an ERROR PDU to a specific connection."""
+        """Send an ERROR PDU to a specific connection.
+
+        Per RFC §10.2.23 the ERROR's seq_num echoes the rejected action's
+        seq_num when available (and does not consume a counter value, so
+        the priority token stays valid for a retry — RFC §11.3).
+        """
         pdu = create_error(
             seq_num=0, code=code, message=message,
             rejected_action=rejected_action,
         )
-        await conn.send_pdu(pdu)
+        seq = rejected_action.get("seq_num") if isinstance(rejected_action, dict) else None
+        if seq is not None:
+            await conn.send_pdu_explicit(pdu, seq)
+        else:
+            await conn.send_pdu(pdu)
 
     async def _end_game(
         self,
