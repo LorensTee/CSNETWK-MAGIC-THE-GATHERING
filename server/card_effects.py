@@ -186,13 +186,23 @@ def _apply_life_change(gs: GameState, player_id: str, amount: int) -> None:
     if player_id in gs.life_totals:
         gs.life_totals[player_id] += amount
 
+def _find_permanent_anywhere(gs: GameState, target_id: str) -> Permanent | None:
+    """Locate a permanent by instance id on any player's battlefield."""
+    for perms in gs.battlefield.values():
+        for perm in perms:
+            if perm.id == target_id:
+                return perm
+    return None
+
+
 def _apply_exile(gs: GameState, target_id: str) -> None:
     """Helper to move a permanent from the battlefield to the exile zone."""
     for player_id, perms in gs.battlefield.items():
         for i, perm in enumerate(perms):
             if perm.id == target_id:
                 popped = perms.pop(i)
-                card_id = getattr(popped, "card_id", target_id.rsplit("_", 1)[0])
+                # Preserve the INSTANCE id (consistent with graveyards).
+                card_id = popped.id
                 
                 if not hasattr(gs, "exile"):
                     gs.exile = {}
@@ -577,9 +587,19 @@ def _effect_mind_rot(
     """Target player discards 2 cards."""
     if not targets:
         return []
-    # The actual discard choice is handled by the game lifecycle; here we
-    # signal the target and let the system prompt the player.
-    return [{"change_type": "FORCE_DISCARD", "target": targets[0], "count": 2}]
+    target = targets[0]
+    count = extra.get("count", 2)
+    hand = gs.hands.get(target, [])
+    changes = []
+    # Discard `count` cards from the target's hand (last-drawn first).
+    discarded = hand[-count:] if count > 0 else []
+    for cid in discarded:
+        hand.remove(cid)
+        gs.graveyards.setdefault(target, []).append(cid)
+        changes.append({
+            "change_type": "DISCARD", "player": target, "card_id": cid,
+        })
+    return changes
 
 
 def _effect_gray_merchant(
@@ -653,13 +673,16 @@ def _effect_swords_to_plowshares(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Exile target creature. Its controller gains life equal to its power.
-    Simplified: +3 life for the owner."""
+    """Exile target creature. Its controller gains life equal to its power."""
     if not targets:
         return []
+    # Resolve controller/power BEFORE the exile removes the permanent.
+    perm = _find_permanent_anywhere(gs, targets[0])
+    gain_player = perm.controller if perm is not None else controller
+    amount = perm.power if perm is not None and perm.power is not None else 0
     _apply_exile(gs, targets[0])
-    _apply_life_change(gs, controller, 3) 
-    return [_exile(targets[0]), _life_gain(controller, 3)]
+    _apply_life_change(gs, gain_player, amount)
+    return [_exile(targets[0]), _life_gain(gain_player, amount)]
 
 
 def _effect_path_to_exile(

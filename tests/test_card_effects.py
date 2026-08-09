@@ -142,3 +142,55 @@ class TestGravedigger:
         assert "grizzly_bears_001" in gs.hands["p1"]
         assert any(c.get("change_type") == "RETURN_FROM_GRAVEYARD"
                    for c in changes)
+
+
+class TestMindRot:
+    """Mind Rot: target player discards two cards (RFC §7.6 effect)."""
+
+    def test_target_player_discards_two(self):
+        from server.card_effects import _effect_mind_rot
+
+        gs = _make_gs()
+        gs.hands["p2"] = ["card_a", "card_b", "card_c", "card_d"]
+
+        changes = _effect_mind_rot(gs, "p1", ["p2"], [], {})
+
+        assert len(gs.hands["p2"]) == 2
+        assert len(gs.graveyards["p2"]) == 2
+        assert set(gs.graveyards["p2"]) <= {"card_a", "card_b", "card_c", "card_d"}
+        assert any(c.get("change_type") == "DISCARD" for c in changes)
+
+    def test_no_target_is_noop(self):
+        from server.card_effects import _effect_mind_rot
+
+        gs = _make_gs()
+        gs.hands["p2"] = ["card_a", "card_b"]
+        changes = _effect_mind_rot(gs, "p1", [], [], {})
+        assert changes == []
+        assert gs.hands["p2"] == ["card_a", "card_b"]
+
+
+class TestSwordsToPlowshares:
+    """Swords to Plowshares: exile target creature; ITS CONTROLLER gains
+    life equal to its power (not a flat +3 to the spell's controller)."""
+
+    def test_creature_controller_gains_life_equal_to_power(self):
+        from server.game_state import Permanent
+        from server.card_effects import _effect_swords_to_plowshares
+
+        gs = _make_gs()
+        grizzly = Permanent(id="grizzly_001", card_def_id="grizzly_bears",
+                            controller="p2", power=2, toughness=2)
+        gs.battlefield["p2"].append(grizzly)
+
+        changes = _effect_swords_to_plowshares(gs, "p1", ["grizzly_001"], [], {})
+
+        # Exiled (per-player exile zone, instance id preserved).
+        assert grizzly not in gs.battlefield["p2"]
+        assert "grizzly_001" in getattr(gs, "exile", {}).get("p2", [])
+        # The CREATURE'S controller gains power (= 2) life.
+        assert gs.life_totals["p2"] == 22
+        assert gs.life_totals["p1"] == 20
+        assert any(c.get("change_type") == "LIFE_GAIN"
+                   and c.get("target") == "p2" and c.get("amount") == 2
+                   for c in changes)
