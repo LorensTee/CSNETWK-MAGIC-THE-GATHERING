@@ -170,6 +170,10 @@ class TestEndGameRobustness:
         asyncio.run(scenario())
 
     def test_end_game_sets_game_over_even_if_broadcast_raises(self):
+        # The real broadcast() is now best-effort per connection, so this
+        # failure mode cannot occur in production; the test still pins the
+        # invariant that _end_game never aborts without claiming the
+        # game-over flag and resetting the ready-state.
         lc = _make_lifecycle()
         lc.connections = []
 

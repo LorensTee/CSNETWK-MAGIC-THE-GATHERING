@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import random
+import sys
+import traceback
 from typing import Any
 
 from server.card_effects import resolve_effect
@@ -75,7 +77,9 @@ def _retrieve_task_exception(task: "asyncio.Task") -> None:
     exc = task.exception()
     if exc is not None:
         print(f"[server] fire-and-forget task failed: {exc!r}",
-              file=__import__("sys").stderr)
+              file=sys.stderr)
+        traceback.print_exception(type(exc), exc, exc.__traceback__,
+                                  file=sys.stderr)
 
 
 class GameLifecycle:
