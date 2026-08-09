@@ -476,39 +476,75 @@ class GameLifecycle:
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
 
+        # ── CLEANUP discard handling (RFC §7.8) ─────────────────────────
+        # No priority window at cleanup: the server sends GAME_STATE_UPDATE
+        # and awaits DISCARD directly (see _run_cleanup_discard).
+        if phase == "CLEANUP" and gs._cleanup_discard_for is not None:
+            await self._run_cleanup_discard(gs, gs._cleanup_discard_for)
+            return
+
         # ── Phases with priority ────────────────────────────────────────
+        if phase == "CLEANUP":
+            # RFC §7.8: no priority is given at cleanup (and no triggers
+            # fire in MTGNP 1.0).  Hand-size discard is handled above.
+            return
+
         await self._run_priority_loop(gs, ap_id, nap_id)
 
-        # ── CLEANUP discard handling ────────────────────────────────────
-        if phase == "CLEANUP" and gs._cleanup_discard_for is not None:
-            pid = gs._cleanup_discard_for
-            conn = self._connection_for(pid)
+    async def _run_cleanup_discard(self, gs: GameState, pid: str) -> None:
+        """RFC §7.8 cleanup: no priority window.
+
+        While the player's hand exceeds 7, send GAME_STATE_UPDATE and await
+        a DISCARD PDU (echoing that GSU's seq_num); reject invalid discards
+        with ERROR ILLEGAL_ACTION; repeat until the hand is ≤ 7.  Then
+        broadcast the final state to BOTH players.
+        """
+        conn = self._connection_for(pid)
+        timeout_s = self.priority_mgr.config.time_limit_ms / 1000.0
+
+        while len(gs.hands.get(pid, [])) > 7:
+            # Send the updated state first; the DISCARD echoes this seq.
+            vs = build_visible_state(gs, pid)
+            gsu = create_game_state_update(seq_num=0, state=vs)
+            await self.send_to(pid, gsu)
+
             try:
-                response = await self.priority_mgr.grant_priority(
-                    conn, pid, read_pdu=self.wait_for_pdu,
+                response = await asyncio.wait_for(
+                    self.wait_for_pdu(pid, timeout_s), timeout=timeout_s
                 )
-            except (PriorityTimeout, ConnectionLost):
-                await self._end_game(gs, "DISCONNECT",
-                                     self._opponent(pid) or "", pid)
+            except (asyncio.TimeoutError, PriorityTimeout, ConnectionLost,
+                    ConnectionError):
+                await self._end_game(
+                    gs, "DISCONNECT", self._opponent(pid) or "", pid
+                )
                 return
-            if response and response.get("type") == "DISCARD":
-                card_ids = response.get("card_ids", [])
-                ok, code, msg = validate_discard(gs, pid, card_ids)
-                if ok:
-                    hand = gs.hands.get(pid, [])
-                    for cid in card_ids:
-                        if cid in hand:
-                            hand.remove(cid)
-                            gs.graveyards.setdefault(pid, []).append(cid)
-                    gs._cleanup_discard_for = None
-                else:
-                    await self.send_error(conn, code or "ILLEGAL_ACTION",
-                                          msg, response)
-            # Broadcast updated state after discard.
-            for p in gs.player_ids:
-                vs = build_visible_state(gs, p)
-                gsu = create_game_state_update(seq_num=0, state=vs)
-                await self.send_to(p, gsu)
+
+            if not response or response.get("type") != "DISCARD":
+                await self.send_error(
+                    conn, "ILLEGAL_ACTION",
+                    "Expected a DISCARD PDU during cleanup.", response or {},
+                )
+                continue
+
+            card_ids = response.get("card_ids", [])
+            ok, code, msg = validate_discard(gs, pid, card_ids)
+            if not ok:
+                await self.send_error(conn, code or "ILLEGAL_ACTION", msg, response)
+                continue
+
+            hand = gs.hands.get(pid, [])
+            for cid in card_ids:
+                if cid in hand:
+                    hand.remove(cid)
+                    gs.graveyards.setdefault(pid, []).append(cid)
+
+        gs._cleanup_discard_for = None
+
+        # RFC §7.8: broadcast the final state to BOTH players.
+        for p in gs.player_ids:
+            vs = build_visible_state(gs, p)
+            gsu = create_game_state_update(seq_num=0, state=vs)
+            await self.send_to(p, gsu)
 
     async def _on_advance(
         self, gs: GameState, from_phase: str, to_phase: str
