@@ -80,7 +80,10 @@ class TurnEngine:
         # Turn 1: the first player (AP) skips their draw step.
         skip_draw = (gs.turn == 1)
 
-        for i, phase in enumerate(IN_GAME_PHASES):
+        i = 0
+        while i < len(IN_GAME_PHASES):
+            phase = IN_GAME_PHASES[i]
+
             # Update phase.
             prev_phase = gs.phase
             gs.phase = phase
@@ -104,6 +107,7 @@ class TurnEngine:
                 # Untap step has NO priority in MTG. Clear the holder so the client UI shows waiting.
                 gs.priority_holder = None 
                 # (You might want to broadcast the state here so the UI updates untaps immediately)
+                i += 1
                 continue
 
             if phase == "CLEANUP":
@@ -113,6 +117,7 @@ class TurnEngine:
                 if getattr(gs, '_cleanup_discard_for', None) is not None:
                     if self._phase_handler is not None:
                         await self._phase_handler(gs, ap_id, nap_id, phase)
+                i += 1
                 continue
 
             # ── Draw step with possible skip ────────────────────────────
@@ -127,6 +132,19 @@ class TurnEngine:
             # ── Invoke the lifecycle's phase handler ─────────────────────
             if self._phase_handler is not None:
                 await self._phase_handler(gs, ap_id, nap_id, phase)
+
+            # ── Phase-skip support ──────────────────────────────────────
+            # A phase handler may set gs._skip_to_phase to jump ahead
+            # (program-states.md step 18: no attackers declared → skip
+            # straight to END_OF_COMBAT).  The transition broadcast to the
+            # target phase fires on the next iteration.
+            skip_to = getattr(gs, "_skip_to_phase", None)
+            if skip_to:
+                gs._skip_to_phase = None
+                if skip_to in IN_GAME_PHASES and IN_GAME_PHASES.index(skip_to) > i:
+                    i = IN_GAME_PHASES.index(skip_to)
+                    continue  # Reprocess at the target phase.
+            i += 1
 
     # ── Auto-phase logic ─────────────────────────────────────────────────────
 

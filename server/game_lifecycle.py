@@ -361,7 +361,14 @@ class GameLifecycle:
                 self.combat_mgr.set_attackers(gs, ap_id, attackers)
                 
             await self._broadcast_game_state(gs) 
-                
+
+            if not self.combat_mgr.attackers:
+                # Program-states.md step 18: with no attackers declared, skip
+                # Declare Blockers, Assign Damage Order, and Combat Damage,
+                # advancing directly to End of Combat.
+                gs._skip_to_phase = "END_OF_COMBAT"
+                return
+
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
 
