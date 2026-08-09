@@ -9,8 +9,7 @@ connects the dispatcher, and hands off to ``GameLifecycle``.
 from __future__ import annotations
 
 import asyncio
-import json
-import struct
+import time
 from typing import Any
 
 from server.card_loader import CardLoader
@@ -57,6 +56,43 @@ class GameServer:
         async with self._server_instance:
             await self._game_loop()
 
+    async def _watchdog_sweep(
+        self,
+        lifecycle: GameLifecycle,
+        disconnect_times: dict,
+    ) -> bool:
+        """One disconnect-timeout sweep pass.
+
+        If a closed connection has exceeded *disconnect_timeout_s*, broadcast
+        GAME_OVER(DISCONNECT) to the surviving player and return ``True``.
+        The GAME_OVER goes through ``send_pdu`` (RFC §10.2.22) so it is
+        seq-numbered and visible in verbose mode (rubric prerequisite), and
+        the winner's socket is NOT closed — RFC §6.6 retains connections
+        after GAME_OVER for the next LOBBY.
+        """
+        for i, c in enumerate(self._connections):
+            if getattr(c, '_closed', False):
+                if c not in disconnect_times:
+                    print(f"[WATCHDOG] Detected {c.player_id} crash! Starting {self.config.disconnect_timeout_s}s timer...")
+                    disconnect_times[c] = time.time()
+                elif time.time() - disconnect_times[c] > self.config.disconnect_timeout_s:
+                    print(f"[WATCHDOG] {c.player_id} timed out! Nuking game.")
+                    winner_conn = self._connections[1 - i]
+
+                    if not getattr(winner_conn, '_closed', False):
+                        go_pdu = {
+                            "type": "GAME_OVER",
+                            "seq_num": winner_conn.seq_num,  # send_pdu overwrites
+                            "winner_id": winner_conn.player_id,
+                            "loser_id": c.player_id,
+                            "reason": "DISCONNECT",
+                        }
+                        await winner_conn.send_pdu(go_pdu)
+
+                    lifecycle._game_over.set()
+                    return True
+        return False
+
     async def _game_loop(self) -> None:
         """Accept pairs of connections and run game sessions."""
         while True:
@@ -77,36 +113,14 @@ class GameServer:
                 conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
 
             async def connection_manager():
-                import time, json, struct
                 disconnect_times = {}
                 print("[WATCHDOG] ONLINE AND SWEEPING!") # If you don't see this, the task is dead.
                 
                 while not lifecycle._game_over.is_set():
                     try:
                         # 1. Sweep for timeouts
-                        for i, c in enumerate(self._connections):
-                            if getattr(c, '_closed', False):
-                                if c not in disconnect_times:
-                                    print(f"[WATCHDOG] Detected {c.player_id} crash! Starting {self.config.disconnect_timeout_s}s timer...")
-                                    disconnect_times[c] = time.time()
-                                elif time.time() - disconnect_times[c] > self.config.disconnect_timeout_s:
-                                    print(f"[WATCHDOG] {c.player_id} timed out! Nuking game.")
-                                    winner_conn = self._connections[1 - i]
-                                    
-                                    if not getattr(winner_conn, '_closed', False):
-                                        go_pdu = {
-                                            "type": "GAME_OVER",
-                                            "seq_num": winner_conn.seq_num,
-                                            "winner_id": winner_conn.player_id,
-                                            "loser_id": c.player_id,
-                                            "reason": "DISCONNECT"
-                                        }
-                                        payload = json.dumps(go_pdu).encode('utf-8')
-                                        winner_conn.writer.write(struct.pack('>I', len(payload)) + payload)
-                                        winner_conn.writer.close()
-                                    
-                                    lifecycle._game_over.set()
-                                    return
+                        if await self._watchdog_sweep(lifecycle, disconnect_times):
+                            return
                         
                         # 2. Process incoming connections
                         try:
