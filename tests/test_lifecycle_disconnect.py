@@ -211,3 +211,42 @@ class TestEndGameRobustness:
             assert lc._mulligan_kept == {}
 
         asyncio.run(scenario())
+
+    def test_game_over_during_confirmation_send_does_not_reseed_seq(self):
+        """The game-over claimed DURING the keep-confirmation send must
+        not re-seed _mulligan_expected_seq after _end_game cleared it
+        (stale seq would STALE-reject the next game's first keep)."""
+        lc = _make_lifecycle()
+        lc.connections = []
+        lc.gs.phase = "MULLIGAN"
+        lc._mulligan_expected_seq = {}
+        lc.gs.player_ids = ["p1", "p2"]
+        lc.gs.life_totals = {"p1": 20, "p2": 20}
+        lc.gs.mulligan_counts = {"p1": 0, "p2": 0}
+        lc.gs.hands = {"p1": ["mountain_001"], "p2": []}
+        lc.gs.libraries = {"p1": [], "p2": []}
+        lc.gs.graveyards = {"p1": [], "p2": []}
+        lc.gs.battlefield = {"p1": [], "p2": []}
+        lc.gs.stack = []
+        lc._mulligan_kept = {"p1": asyncio.Event(), "p2": asyncio.Event()}
+
+        async def fake_send_to(pid, pdu):
+            # The game ends while the confirmation is being sent.
+            await lc._end_game(lc.gs, "CONCEDE", "p2", "p1")
+
+        lc.send_to = fake_send_to
+
+        async def scenario():
+            conn = SimpleNamespace(player_id="p1", seq_num=5)
+            await lc.handle_mulligan_choice(
+                conn,
+                {"type": "MULLIGAN_CHOICE", "seq_num": 3,
+                 "player_id": "p1", "keep": True, "cards_to_bottom": []},
+            )
+            # The reset happened during the send — nothing re-seeded and
+            # nothing re-set.
+            assert lc._mulligan_expected_seq == {}
+            assert lc._mulligan_kept == {}
+            assert lc._game_over.is_set()
+
+        asyncio.run(scenario())

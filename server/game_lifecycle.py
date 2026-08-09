@@ -70,8 +70,12 @@ class GameOverInterrupt(Exception):
 def _retrieve_task_exception(task: "asyncio.Task") -> None:
     """Done-callback: swallow a task's exception so Python does not print
     'Task exception was never retrieved' for fire-and-forget tasks."""
-    if not task.cancelled():
-        task.exception()
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        print(f"[server] fire-and-forget task failed: {exc!r}",
+              file=__import__("sys").stderr)
 
 
 class GameLifecycle:
@@ -1199,19 +1203,19 @@ class GameLifecycle:
 
         process_mulligan_choice(self.gs, player_id, keep, cards_to_bottom)
 
-        # The game may have ended (CONCEDE/disconnect) while this handler
-        # was awaiting the confirmation send — _end_game clears the
-        # mulligan bookkeeping mid-flight.  Re-check: a keep processed
-        # after GAME_OVER must not touch the reset dicts (KeyError would
-        # kill the read loop) nor re-seed _mulligan_expected_seq (which
-        # would STALE-reject the next game's first MULLIGAN_CHOICE and
-        # hang the keep-wait forever).
-        if self._game_over.is_set():
-            return
-
         vs = build_visible_state(self.gs, player_id)
         gsu = create_game_state_update(seq_num=0, state=vs)
         await self.send_to(player_id, gsu)
+
+        # The game may have ended (CONCEDE/disconnect) DURING the
+        # confirmation send — _end_game clears the mulligan bookkeeping
+        # mid-flight.  Re-check between the await and the bookkeeping:
+        # re-seeding _mulligan_expected_seq after the reset would
+        # STALE-reject the next game's first MULLIGAN_CHOICE and hang the
+        # keep-wait forever, and touching the reset _mulligan_kept dict
+        # would KeyError-kill the read loop.
+        if self._game_over.is_set():
+            return
         # Record seq_num for MULLIGAN_CHOICE echo validation.
         self._mulligan_expected_seq[player_id] = conn.seq_num
 
@@ -1312,12 +1316,20 @@ class GameLifecycle:
                 return
 
     async def broadcast(self, pdu: dict[str, Any]) -> None:
-        """Send a PDU to all connected players (skipping dead sockets —
-        a send to a closed connection raises, which would abort callers
-        like ``_end_game`` before they set ``_game_over``)."""
+        """Send a PDU to all connected players.
+
+        Best-effort per connection: a socket that dies mid-send (RST
+        during drain — not yet flagged ``_closed``) must not abort the
+        broadcast, or the surviving players would never receive the PDU
+        (e.g. GAME_OVER after a CONCEDE).  ``send_pdu`` already sets
+        ``_closed`` on write failures.
+        """
         for conn in self.connections:
             if conn.player_id and not getattr(conn, "_closed", False):
-                await conn.send_pdu(pdu)
+                try:
+                    await conn.send_pdu(pdu)
+                except (ConnectionError, OSError):
+                    continue  # Best-effort — this socket is dead anyway.
 
     async def send_error(
         self,
