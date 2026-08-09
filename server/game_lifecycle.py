@@ -792,6 +792,14 @@ class GameLifecycle:
             vs = build_visible_state(gs, pid)
             pdu = create_game_state_update(seq_num=0, state=vs)
             await self.send_to(pid, pdu)
+            # A broadcast bumps the connection's seq_num; during MULLIGAN
+            # the client echoes the latest GSU in MULLIGAN_CHOICE, so
+            # keep the echo-validation baseline in sync (a reconnect
+            # broadcast mid-mulligan would otherwise STALE-reject every
+            # keep and hang the mulligan).
+            if gs.phase == "MULLIGAN" and not self._game_over.is_set():
+                self._mulligan_expected_seq[pid] = \
+                    self._connection_for(pid).seq_num
 
     async def _broadcast_combat_result(
         self, gs: GameState, result: dict[str, Any]

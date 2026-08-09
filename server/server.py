@@ -154,6 +154,10 @@ class GameServer:
                                 print(f"[RECONNECT] {old_conn.player_id} rejoined the game!")
                                 new_conn.player_id = old_conn.player_id
                                 new_conn.seq_num = old_conn.seq_num
+                                # Carry the priority token too, so the
+                                # dispatcher's stale pre-filter stays
+                                # armed for the reconnected player.
+                                new_conn.grant_token = old_conn.grant_token
                                 new_conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
                                 
                                 self._connections[i] = new_conn
@@ -181,6 +185,7 @@ class GameServer:
             for conn in self._connections:
                 conn.seq_num = 0
                 conn.player_id = None
+                conn.grant_token = None
 
     async def _on_client_connected(
         self,
