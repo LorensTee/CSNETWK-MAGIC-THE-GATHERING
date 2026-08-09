@@ -107,26 +107,33 @@ class GameClient:
 
         ready_pdu = {
             "type": "PLAYER_READY",
-            "seq_num": 1, 
+            # The client's own PING/READY counter (both are exempt from
+            # echoing the server's seq_num — RFC §5.4).
+            "seq_num": self.connection.client_seq_num + 1,
             "player_id": self.config.player_id,
             "deck_list": my_deck 
         }
+        if self.connection:
+            self.connection.client_seq_num += 1
         await self.connection.send_pdu(ready_pdu)
 
         # 4. Run concurrent tasks (use gather for Python 3.10 compatibility).
+        #    The input task is tracked separately: stdin may be blocked with
+        #    no input, and cancelling it must not stall shutdown.
         tasks = [
             asyncio.create_task(self._read_loop()),
             asyncio.create_task(self._write_loop()),
             asyncio.create_task(self._render_loop()),
             asyncio.create_task(self._heartbeat_loop()),
-            asyncio.create_task(self._input_loop()),
         ]
+        input_task = asyncio.create_task(self._input_loop())
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             for t in tasks:
                 t.cancel()
         finally:
+            input_task.cancel()
             await self._cleanup()
 
     # ═══════════════════════════════════════════════════════════════════════════

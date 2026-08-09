@@ -11,6 +11,7 @@ thread-pool executor so the asyncio event loop is never blocked.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -65,12 +66,42 @@ class InputHandler:
                 await self.client.outgoing_queue.put(pdu)
 
     async def _read_line(self) -> str | None:
-        """Read one line from stdin without blocking the event loop."""
+        """Read one line from stdin without blocking the event loop.
+
+        Uses ``loop.add_reader`` on the stdin fd (no background thread),
+        so a blocked read can never stall shutdown: cancelling the awaiting
+        task removes the reader and returns promptly.
+        """
         loop = asyncio.get_event_loop()
-        try:
-            return await loop.run_in_executor(None, sys.stdin.readline)
-        except (EOFError, KeyboardInterrupt):
+        stdin = sys.stdin
+        if stdin is None:
             return None
+        try:
+            fd = stdin.fileno()
+        except (ValueError, OSError):
+            return None
+
+        future = loop.create_future()
+
+        def _on_readable() -> None:
+            try:
+                data = os.read(fd, 4096)
+            except (BlockingIOError, InterruptedError):
+                return  # spurious wakeup — keep waiting
+            except OSError:
+                data = b""
+            if not future.done():
+                future.set_result(data if data else None)
+
+        loop.add_reader(fd, _on_readable)
+        try:
+            data = await future
+        finally:
+            loop.remove_reader(fd)
+
+        if data is None:
+            return None
+        return data.decode(errors="replace")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Command dispatch

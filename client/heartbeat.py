@@ -31,6 +31,13 @@ class HeartbeatManager:
         The ``GameClient`` whose *outgoing_queue* is used to send PINGs.
     """
 
+    #: Seconds between PINGs (RFC §4.3: 30 s).
+    PING_INTERVAL_S = 30
+
+    #: Seconds to wait for a PONG before declaring the server unreachable
+    #: (RFC §4.3: 10 s).
+    PONG_TIMEOUT_S = 10
+
     def __init__(self, client: GameClient) -> None:
         self.client = client
         self._ping_seq: int = 0
@@ -44,9 +51,12 @@ class HeartbeatManager:
         Sends a ``PING`` every 30 seconds and waits up to 10 seconds for a
         ``PONG``.  On timeout, sets ``client.state = 'DISCONNECTED'`` and
         returns.
+
+        The loop survives GAME_OVER: connections are retained for the next
+        LOBBY (RFC §6.6), so heartbeating continues across games.
         """
-        while self.client.state not in ("DISCONNECTED", "GAME_OVER"):
-            await asyncio.sleep(30)
+        while self.client.state != "DISCONNECTED":
+            await asyncio.sleep(self.PING_INTERVAL_S)
 
             if self.client.state == "DISCONNECTED":
                 break
@@ -63,7 +73,9 @@ class HeartbeatManager:
 
             # Wait for PONG with 10-second timeout.
             try:
-                await asyncio.wait_for(self._pong_received.wait(), timeout=10.0)
+                await asyncio.wait_for(
+                    self._pong_received.wait(), timeout=self.PONG_TIMEOUT_S
+                )
             except asyncio.TimeoutError:
                 print("Server unreachable (PONG timeout). Disconnecting.")
                 self.client.state = "DISCONNECTED"
