@@ -594,16 +594,20 @@ def _effect_gray_merchant(
     card_loader = extra.get("card_loader")
     for perm in gs.battlefield.get(controller, []):
         if card_loader is not None:
-            cd = card_loader.get_card(getattr(perm, "card_def_id", perm.card_id))
+            cd = card_loader.get_card(getattr(perm, "card_def_id", "") or "")
             if cd is not None and cd.color == "B":
                 devotion += 1
         else:
             devotion += 1
-            
+
+    # The creature enters the battlefield (ETB).
+    spawn_id = extra.get("card_id") or controller
+    _apply_spawn_permanent(gs, controller, spawn_id, card_loader)
+
     opponent = next((pid for pid in gs.player_ids if pid != controller), None)
     if opponent is None:
         return []
-        
+
     _apply_life_change(gs, opponent, -devotion)
     _apply_life_change(gs, controller, devotion)
     return [_life_loss(opponent, devotion), _life_gain(controller, devotion)]
@@ -619,6 +623,11 @@ def _effect_gravedigger(
     """Return target creature card from your graveyard to your hand."""
     if not targets:
         return []
+
+    # The creature enters the battlefield (ETB).
+    spawn_id = extra.get("card_id") or controller
+    _apply_spawn_permanent(gs, controller, spawn_id, extra.get("card_loader"))
+
     _apply_raise_dead(gs, controller, targets[0])
     return [{"change_type": "RETURN_FROM_GRAVEYARD", "target": targets[0]}]
 
