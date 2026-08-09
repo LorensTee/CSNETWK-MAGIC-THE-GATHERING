@@ -121,6 +121,17 @@ class CombatManager:
         """
         self.damage_order[attacker_id] = list(blocker_order)
 
+    def has_first_strike_participants(self, gs: GameState) -> bool:
+        """Return ``True`` if any attacking or blocking creature has first
+        strike or double strike (RFC §9.6: the First Strike Damage Step is
+        optional and only runs when such a creature is present).
+        """
+        for cid in list(self.attackers) + list(self.blockers):
+            perm = self._find_any_permanent(gs, cid)
+            if perm is not None and self._deals_first_strike(perm):
+                return True
+        return False
+
     def compute_first_strike_damage(self, gs: GameState) -> dict[str, Any]:
         """Compute first strike damage step.
 
@@ -170,8 +181,15 @@ class CombatManager:
             if perm is None:
                 continue  # Attacker died in first strike step.
 
-            if first_strike_only != self._has_first_strike(perm):
-                continue  # Skip if this creature doesn't belong in this step.
+            if first_strike_only:
+                # FS step: first strike AND double strike creatures deal damage.
+                if not self._deals_first_strike(perm):
+                    continue
+            else:
+                # Normal step: pure first-strike creatures already dealt
+                # damage; double strike deals damage in BOTH steps (§9.7).
+                if self._has_first_strike(perm) and not self._has_double_strike(perm):
+                    continue
 
             power = perm.power
 
@@ -227,8 +245,12 @@ class CombatManager:
             if b_perm is None:
                 continue
 
-            if first_strike_only != self._has_first_strike(b_perm):
-                continue
+            if first_strike_only:
+                if not self._deals_first_strike(b_perm):
+                    continue
+            else:
+                if self._has_first_strike(b_perm) and not self._has_double_strike(b_perm):
+                    continue
 
             a_perm = self._find_permanent(gs, ap_id, a_id)
             if a_perm is None:
@@ -285,10 +307,37 @@ class CombatManager:
         return None
 
     @staticmethod
+    def _find_any_permanent(gs: GameState, permanent_id: str) -> Permanent | None:
+        """Look up a permanent on any player's battlefield by ID."""
+        for perms in gs.battlefield.values():
+            for perm in perms:
+                if perm.id == permanent_id:
+                    return perm
+        return None
+
+    @staticmethod
+    def _deals_first_strike(perm: Permanent) -> bool:
+        """Return ``True`` if the permanent deals damage in the first strike
+        step (has first strike OR double strike).
+        """
+        return (
+            CombatManager._has_first_strike(perm)
+            or CombatManager._has_double_strike(perm)
+        )
+
+    @staticmethod
     def _has_first_strike(perm: Permanent) -> bool:
         """Return ``True`` if the permanent has first strike."""
         return any(
             a.get("type") == "keyword" and a.get("name") == "first_strike"
+            for a in getattr(perm, "abilities", [])
+        )
+
+    @staticmethod
+    def _has_double_strike(perm: Permanent) -> bool:
+        """Return ``True`` if the permanent has double strike."""
+        return any(
+            a.get("type") == "keyword" and a.get("name") == "double_strike"
             for a in getattr(perm, "abilities", [])
         )
 

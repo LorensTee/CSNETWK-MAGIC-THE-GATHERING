@@ -113,6 +113,66 @@ class TestDamageComputation:
         assert len(fs_events) > 0, "First strike creature should deal damage"
         assert len(nor_events) == 0, "Non-first-strike should NOT damage in FS step"
 
+    def test_pure_first_strike_excluded_from_normal_step(self):
+        """§9.7: creatures with first strike (not double strike) that dealt
+        damage in the FS step do NOT deal damage in the normal step."""
+        gs = _make_gs()
+        cm = CombatManager()
+        cm.attackers = {"fs_001": "p2"}
+        fs = Permanent(id="fs_001", card_def_id="white_knight",
+                       controller="p1", power=2, toughness=2,
+                       abilities=[{"type": "keyword", "name": "first_strike"}])
+        gs.battlefield["p1"].append(fs)
+
+        cm.compute_first_strike_damage(gs)
+        result = cm.compute_combat_damage(gs)
+
+        fs_events = [e for e in result["damage_events"] if e["source"] == "fs_001"]
+        assert fs_events == []
+
+    def test_double_strike_deals_damage_in_both_steps(self):
+        """§9.6/§9.7: double-strike creatures deal damage in BOTH steps."""
+        gs = _make_gs()
+        cm = CombatManager()
+        cm.attackers = {"ds_001": "p2"}
+        cm.blockers = {"wall_001": "ds_001"}
+        ds = Permanent(id="ds_001", card_def_id="serra_angel",
+                       controller="p1", power=3, toughness=4,
+                       abilities=[{"type": "keyword", "name": "double_strike"}])
+        wall = Permanent(id="wall_001", card_def_id="wall_of_stone",
+                         controller="p2", power=0, toughness=8)
+        gs.battlefield["p1"].append(ds)
+        gs.battlefield["p2"].append(wall)
+
+        fs_result = cm.compute_first_strike_damage(gs)
+        normal_result = cm.compute_combat_damage(gs)
+
+        fs_events = [e for e in fs_result["damage_events"] if e["source"] == "ds_001"]
+        normal_events = [e for e in normal_result["damage_events"]
+                         if e["source"] == "ds_001"]
+        assert len(fs_events) == 1, "Double strike must deal damage in FS step"
+        assert len(normal_events) == 1, "Double strike must deal damage in normal step"
+        assert fs_events[0]["target"] == "wall_001"
+        assert normal_events[0]["target"] == "wall_001"
+
+    def test_fs_step_has_participants(self):
+        """§9.6: the FS step occurs only if first/double strike is present."""
+        gs = _make_gs()
+        cm = CombatManager()
+        cm.attackers = {"nor_001": "p2"}
+        nor = Permanent(id="nor_001", card_def_id="grizzly_bears",
+                        controller="p1", power=2, toughness=2)
+        gs.battlefield["p1"].append(nor)
+        assert cm.has_first_strike_participants(gs) is False
+
+        # Add a first-strike attacker → participants now exist.
+        cm.attackers["fs_001"] = "p2"
+        fs = Permanent(id="fs_001", card_def_id="white_knight",
+                       controller="p1", power=2, toughness=2,
+                       abilities=[{"type": "keyword", "name": "first_strike"}])
+        gs.battlefield["p1"].append(fs)
+        assert cm.has_first_strike_participants(gs) is True
+
     def test_blocked_attacker_deals_no_overflow_to_player(self):
         """Spec §9.7: MTGNP 1.0 does not implement trample.
 

@@ -424,6 +424,12 @@ class GameLifecycle:
             return
 
         if phase == "FIRST_STRIKE_DAMAGE":
+            # RFC §9.6: this step is OPTIONAL — it only occurs if at least
+            # one attacking or blocking creature has first/double strike.
+            if not self.combat_mgr.has_first_strike_participants(gs):
+                gs._skip_to_phase = "COMBAT_DAMAGE"
+                return
+
             result = self.combat_mgr.compute_first_strike_damage(gs)
             
             check_state_based_actions(gs, self.card_loader)
