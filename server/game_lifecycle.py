@@ -566,9 +566,7 @@ class GameLifecycle:
         """Loop priority windows until both pass on empty stack (advance)
         or both pass on non-empty stack (resolve top)."""
 
-        async def flip_to_nap():
-            gs.priority_holder = nap_id
-            await self._broadcast_game_state(gs)
+        actor: str | None = None
 
         while not self._game_over.is_set():
 
@@ -577,27 +575,38 @@ class GameLifecycle:
                 await self._broadcast_game_state(gs)
                 if self._check_game_over(gs):
                     return
-                
-            needs_broadcast = (gs.priority_holder != ap_id)
-            gs.priority_holder = ap_id
+
+            # RFC §8.1.3: a player who casts a spell / activates an ability
+            # retains priority — the next window opens with THEM, not
+            # automatically with the Active Player.
+            first_id, second_id = ap_id, nap_id
+            if actor is not None:
+                first_id, second_id = actor, (nap_id if actor == ap_id else ap_id)
+
+            needs_broadcast = (gs.priority_holder != first_id)
+            gs.priority_holder = first_id
 
             if needs_broadcast:
                 await self._broadcast_game_state(gs)
 
+            async def flip_to_second():
+                gs.priority_holder = second_id
+                await self._broadcast_game_state(gs)
+
             try:
-                both_passed, action = await self.priority_mgr.run_priority_window(
-                    self._connection_for(ap_id),
-                    self._connection_for(nap_id),
-                    ap_id, nap_id,
+                both_passed, action, actor = await self.priority_mgr.run_priority_window(
+                    self._connection_for(first_id),
+                    self._connection_for(second_id),
+                    first_id, second_id,
                     read_pdu=self.wait_for_pdu,
-                    on_ap_pass_cb=flip_to_nap,
+                    on_ap_pass_cb=flip_to_second,
                 )
             except PriorityTimeout as exc:
-                winner = nap_id if exc.player_id == ap_id else ap_id
+                winner = second_id if exc.player_id == first_id else first_id
                 await self._end_game(gs, "DISCONNECT", winner, exc.player_id)
                 return
             except ConnectionLost as exc:
-                winner = nap_id if exc.player_id == ap_id else ap_id
+                winner = second_id if exc.player_id == first_id else first_id
                 await self._end_game(gs, "DISCONNECT", winner, exc.player_id)
                 return
 

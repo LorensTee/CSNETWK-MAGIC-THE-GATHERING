@@ -80,6 +80,42 @@ class TestGrantPriority:
         # ERROR echoes the rejected action's seq_num (§10.2.23).
         assert errors[0]["seq_num"] == grants[0]["seq_num"] - 1
 
+    def test_window_reports_actor(self):
+        conn = FakeConn()
+        pm = _make_manager()
+        stage = {"n": 0}
+
+        async def read_pdu(pid, timeout):
+            grant = [p for p in conn.sent if p["type"] == "PRIORITY_GRANT"][-1]
+            stage["n"] += 1
+            if stage["n"] == 1:
+                # AP passes.
+                return {"type": "PRIORITY_PASS", "seq_num": grant["seq_num"]}
+            # NAP acts.
+            return {"type": "CAST_SPELL", "seq_num": grant["seq_num"]}
+
+        both, action, actor = asyncio.run(pm.run_priority_window(
+            conn, conn, "p1", "p2", read_pdu=read_pdu,
+        ))
+        assert both is False
+        assert action["type"] == "CAST_SPELL"
+        assert actor == "p2"
+
+    def test_window_both_passed_has_no_actor(self):
+        conn = FakeConn()
+        pm = _make_manager()
+
+        async def read_pdu(pid, timeout):
+            grant = [p for p in conn.sent if p["type"] == "PRIORITY_GRANT"][-1]
+            return {"type": "PRIORITY_PASS", "seq_num": grant["seq_num"]}
+
+        both, action, actor = asyncio.run(pm.run_priority_window(
+            conn, conn, "p1", "p2", read_pdu=read_pdu,
+        ))
+        assert both is True
+        assert action is None
+        assert actor is None
+
     def test_timeout_raises_priority_timeout(self):
         conn = FakeConn()
         pm = _make_manager()

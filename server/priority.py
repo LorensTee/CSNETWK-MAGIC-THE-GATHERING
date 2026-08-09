@@ -173,7 +173,11 @@ class PriorityManager:
 
         Returns
         -------
-        ``(both_passed, action_pdu)``.
+        ``(both_passed, action_pdu, actor_id)``.
+
+        ``actor_id`` is the player who submitted the last action PDU
+        (RFC §8.1.3: that player retains priority), or ``None`` when both
+        players passed.
 
         Raises
         ------
@@ -184,7 +188,7 @@ class PriorityManager:
             ap_conn, ap_id, read_pdu=read_pdu,
         )
         if ap_response is not None and ap_response.get("type") != "PRIORITY_PASS":
-            return False, ap_response
+            return False, ap_response, ap_id
 
         if on_ap_pass_cb:
             await on_ap_pass_cb()
@@ -193,6 +197,6 @@ class PriorityManager:
             nap_conn, nap_id, read_pdu=read_pdu,
         )
         if nap_response is not None and nap_response.get("type") != "PRIORITY_PASS":
-            return False, nap_response
+            return False, nap_response, nap_id
 
-        return True, None
+        return True, None, None
