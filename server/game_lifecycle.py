@@ -130,15 +130,23 @@ class GameLifecycle:
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._pending_pdu[player_id] = future
+        game_over_task = asyncio.create_task(self._game_over.wait())
         try:
-            pdu = await asyncio.wait_for(future, timeout=timeout)
-            
-            pdu["_player_id"] = player_id 
-            
-            return pdu
-        except asyncio.TimeoutError:
-            raise
+            done, _ = await asyncio.wait(
+                {asyncio.ensure_future(future), game_over_task},
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=timeout,
+            )
+            if future in done:
+                pdu = future.result()
+                pdu["_player_id"] = player_id
+                return pdu
+            # Either the game ended (watchdog/priority timeout) or the
+            # wait timed out — both surface as TimeoutError to the caller,
+            # which terminates the game with DISCONNECT.
+            raise asyncio.TimeoutError()
         finally:
+            game_over_task.cancel()
             # Clean up the future reference on timeout or cancellation.
             if self._pending_pdu.get(player_id) is future:
                 self._pending_pdu.pop(player_id, None)
@@ -199,8 +207,13 @@ class GameLifecycle:
         for conn in conns:
             conn.player_id = None
 
-        while gs.players_ready < 2:
+        while gs.players_ready < 2 and not self._game_over.is_set():
             await asyncio.sleep(0.1)  # Yield — dispatcher updates state.
+
+        # A disconnect during LOBBY must not stall the lifecycle: the
+        # watchdog sets _game_over, which unblocks this loop.
+        if self._game_over.is_set():
+            return
 
         # Assign player IDs in connection order.
         for conn in conns:
@@ -273,7 +286,19 @@ class GameLifecycle:
             if pid in self._mulligan_kept
         ]
         if kept_tasks:
-            await asyncio.gather(*kept_tasks)
+            # A disconnect during MULLIGAN must not stall the lifecycle:
+            # race the keep-waits against the game-over event.
+            game_over_task = asyncio.create_task(self._game_over.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {asyncio.ensure_future(t) for t in kept_tasks}
+                    | {game_over_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if game_over_task not in done:
+                    return  # All players kept.
+            finally:
+                game_over_task.cancel()
 
     async def _run_in_game(
         self, gs: GameState, conns: list[ServerConnection]
@@ -320,6 +345,7 @@ class GameLifecycle:
         gs._cleanup_discard_for = None
         self._deck_lists.clear()
         self._mulligan_kept.clear()
+        self._mulligan_expected_seq.clear()
         self._player_index.clear()
         self.stack_mgr.clear_cache()
         self.combat_mgr.reset()
