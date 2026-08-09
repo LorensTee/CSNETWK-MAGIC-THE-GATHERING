@@ -69,6 +69,11 @@ prerequisite markers.
 
 ## 5. Key fixes delivered this session (git log)
 
+- `648a5b6` style: imports + traceback logging for fire-and-forget task failures
+- `581d5cb` mulligan guard at the real race point + best-effort per-connection broadcast
+- `40ff706` atomic `_end_game` claim + mulligan guard placement
+- `768dbcb` review findings: `_end_game` robustness, watchdog both-dead reset,
+  mulligan race guards (three review passes; final verdict "ship as-is")
 - `6ecee24` game-flow concurrency overhaul — mulligan waits for all keeps,
   graceful game-over unwind (GameOverInterrupt), read loops once per lifecycle,
   ready-state reset in `_end_game` (broadcast-then-reset), temp-id clearing.
