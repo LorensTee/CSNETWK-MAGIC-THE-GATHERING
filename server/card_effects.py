@@ -250,7 +250,8 @@ def _apply_spawn_permanent(gs, controller: str, card_id: str, card_loader: Any =
         tapped=enters_tapped,
         power=power,
         toughness=toughness,
-        summoning_sick=not haste, # Haste skips summoning sickness!
+        summoning_sick=not haste,  # Haste skips summoning sickness!
+        abilities=list(cd.abilities) if cd else [],
     )
     
     # Actually put it on the board!

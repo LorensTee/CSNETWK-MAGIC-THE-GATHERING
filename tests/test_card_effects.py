@@ -194,3 +194,55 @@ class TestSwordsToPlowshares:
         assert any(c.get("change_type") == "LIFE_GAIN"
                    and c.get("target") == "p2" and c.get("amount") == 2
                    for c in changes)
+
+
+class TestSpawnKeywords:
+    """Permanents must carry their keyword abilities (vigilance/flying/haste
+    are read from CardDef.abilities at spawn time)."""
+
+    @classmethod
+    def setup_class(cls):
+        from server.card_loader import CardLoader
+        cls.loader = CardLoader()
+        cls.loader.load()
+
+    def test_spawned_creature_carries_keyword_abilities(self):
+        from server.card_effects import _apply_spawn_permanent
+
+        gs = _make_gs()
+        _apply_spawn_permanent(gs, "p1", "serra_angel_001", self.loader)
+
+        perm = gs.battlefield["p1"][0]
+        names = {a.get("name") for a in perm.abilities}
+        assert "vigilance" in names
+        assert "flying" in names
+        assert perm.card_def_id == "serra_angel"
+        assert perm.power == 4 and perm.toughness == 4
+
+    def test_multiword_base_id_resolves_correctly(self):
+        from server.card_effects import _apply_spawn_permanent
+
+        gs = _make_gs()
+        _apply_spawn_permanent(gs, "p1", "grizzly_bears_001", self.loader)
+
+        perm = gs.battlefield["p1"][0]
+        # Multi-word base id must not be truncated ('grizzly', not 'grizzly').
+        assert perm.card_def_id == "grizzly_bears"
+        assert perm.power == 2 and perm.toughness == 2
+
+    def test_haste_skips_summoning_sickness(self):
+        from server.card_effects import _apply_spawn_permanent
+
+        gs = _make_gs()
+        _apply_spawn_permanent(gs, "p1", "goblin_guide_001", self.loader)
+
+        perm = gs.battlefield["p1"][0]
+        assert perm.summoning_sick is False  # Haste → can attack immediately.
+
+    def test_non_haste_creature_has_summoning_sickness(self):
+        from server.card_effects import _apply_spawn_permanent
+
+        gs = _make_gs()
+        _apply_spawn_permanent(gs, "p1", "grizzly_bears_001", self.loader)
+
+        assert gs.battlefield["p1"][0].summoning_sick is True
