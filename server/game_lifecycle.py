@@ -67,6 +67,13 @@ class GameOverInterrupt(Exception):
     """
 
 
+def _retrieve_task_exception(task: "asyncio.Task") -> None:
+    """Done-callback: swallow a task's exception so Python does not print
+    'Task exception was never retrieved' for fire-and-forget tasks."""
+    if not task.cancelled():
+        task.exception()
+
+
 class GameLifecycle:
     """The game lifecycle state machine.
 
@@ -1158,6 +1165,15 @@ class GameLifecycle:
             )
             return
 
+        # The game may have ended (CONCEDE/disconnect) while this PDU was
+        # in flight — _end_game clears the mulligan bookkeeping.  Reject
+        # BEFORE touching the (possibly reset) game state: validate/process
+        # on cleared mulligan_counts would raise, and re-seeding
+        # _mulligan_expected_seq would STALE-reject the next game's first
+        # MULLIGAN_CHOICE and hang the keep-wait forever.
+        if self._game_over.is_set():
+            return
+
         # Validate seq_num echoes the last GAME_STATE_UPDATE (RFC §5.4).
         expected = self._mulligan_expected_seq.get(player_id)
         if expected is not None:
@@ -1341,14 +1357,18 @@ class GameLifecycle:
         to GAME_OVER (which may arrive while the engine is still
         unwinding) are counted for the next game's lobby.
 
-        ``_game_over`` is set in a ``finally`` so a failed send mid-
-        broadcast cannot abort the unwinding (which would delay it to the
-        watchdog/priority timeout and re-broadcast GAME_OVER(DISCONNECT)
-        over a real CONCEDE/WIN).  Concurrent callers (concede + watchdog
-        + timeout) are deduped by the early ``is_set()`` check.
+        ``_game_over`` is set synchronously at entry — BEFORE the first
+        await — so the dedupe is atomic: concurrent callers (concede +
+        watchdog + timeout) see it set and return, and a broadcast send
+        failure can never leave the game unflagged (no delayed unwinding
+        into a watchdog DISCONNECT re-broadcast, and no double GAME_OVER).
         """
         if self._game_over.is_set():
             return  # Already ending — dedupe concurrent game-over sources.
+
+        # Claim the ending synchronously (atomic with respect to other
+        # coroutines) before any await.
+        self._game_over.set()
 
         pdu = create_game_over(
             seq_num=0,
@@ -1359,7 +1379,8 @@ class GameLifecycle:
         try:
             await self.broadcast(pdu)
         finally:
-            # Reset ready-state for the next game.
+            # Reset ready-state for the next game.  (Pure synchronous
+            # operations — cannot mask the broadcast's exception.)
             gs.players_ready = 0
             gs.player_ids.clear()
             gs.waiting_for = []
@@ -1370,8 +1391,6 @@ class GameLifecycle:
             self._mulligan_kept.clear()
             self._mulligan_expected_seq.clear()
             gs.mulligan_counts.clear()
-
-            self._game_over.set()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Internal helpers
@@ -1401,6 +1420,9 @@ class GameLifecycle:
                 self._pending_end_task = asyncio.ensure_future(
                     self._end_game(gs, "LIFE_ZERO", winner, pid)
                 )
+                self._pending_end_task.add_done_callback(
+                    _retrieve_task_exception
+                )
                 return True
             # DECK_EMPTY: draw from empty library.
             if gs._draw_failed_for == pid:
@@ -1408,6 +1430,9 @@ class GameLifecycle:
                 winner = self._opponent(pid) or ""
                 self._pending_end_task = asyncio.ensure_future(
                     self._end_game(gs, "DECK_EMPTY", winner, pid)
+                )
+                self._pending_end_task.add_done_callback(
+                    _retrieve_task_exception
                 )
                 return True
         return False

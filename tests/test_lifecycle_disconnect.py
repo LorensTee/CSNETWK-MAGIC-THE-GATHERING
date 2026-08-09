@@ -151,19 +151,23 @@ class TestEndGameRobustness:
         lc.connections = []
         calls = []
 
-        async def scenario():
-            await lc._end_game(lc.gs, "CONCEDE", "p2", "p1")
-            await lc._end_game(lc.gs, "DISCONNECT", "p1", "p2")
-            assert lc._game_over.is_set()
-
-        # Patch broadcast to record call count.
         async def fake_broadcast(pdu):
             calls.append(pdu)
+            await asyncio.sleep(0.01)  # widen the race window
 
         lc.broadcast = fake_broadcast
+
+        async def scenario():
+            # Two game-over sources firing concurrently must yield exactly
+            # one GAME_OVER broadcast (atomic claim via _game_over.set()).
+            await asyncio.gather(
+                lc._end_game(lc.gs, "CONCEDE", "p2", "p1"),
+                lc._end_game(lc.gs, "DISCONNECT", "p1", "p2"),
+            )
+            assert lc._game_over.is_set()
+            assert len(calls) == 1, f"expected 1 broadcast, got {len(calls)}"
+
         asyncio.run(scenario())
-        # The second _end_game call is deduped: only one GAME_OVER.
-        assert len(calls) == 1
 
     def test_end_game_sets_game_over_even_if_broadcast_raises(self):
         lc = _make_lifecycle()
