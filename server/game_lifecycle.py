@@ -105,6 +105,10 @@ class GameLifecycle:
         # Keyed by player_id.  Only one future per player at a time.
         self._pending_pdu: dict[str, asyncio.Future[dict]] = {}
 
+        # Last _end_game task spawned from _check_game_over (kept alive so
+        # it cannot be GC'd mid-run).
+        self._pending_end_task: asyncio.Task | None = None
+
         # Lock for game-state mutations.
         self._lock = asyncio.Lock()
 
@@ -374,6 +378,8 @@ class GameLifecycle:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if game_over_task in done:
+                        for fut in keep_futures:
+                            fut.cancel()  # Discard the pending keep-waits.
                         return  # Game over interrupted the mulligan.
                     keep_futures = pending - {game_over_task}
                 return  # All players kept.
@@ -1177,6 +1183,16 @@ class GameLifecycle:
 
         process_mulligan_choice(self.gs, player_id, keep, cards_to_bottom)
 
+        # The game may have ended (CONCEDE/disconnect) while this handler
+        # was awaiting the confirmation send — _end_game clears the
+        # mulligan bookkeeping mid-flight.  Re-check: a keep processed
+        # after GAME_OVER must not touch the reset dicts (KeyError would
+        # kill the read loop) nor re-seed _mulligan_expected_seq (which
+        # would STALE-reject the next game's first MULLIGAN_CHOICE and
+        # hang the keep-wait forever).
+        if self._game_over.is_set():
+            return
+
         vs = build_visible_state(self.gs, player_id)
         gsu = create_game_state_update(seq_num=0, state=vs)
         await self.send_to(player_id, gsu)
@@ -1184,7 +1200,9 @@ class GameLifecycle:
         self._mulligan_expected_seq[player_id] = conn.seq_num
 
         if keep:
-            self._mulligan_kept[player_id].set()
+            kept = self._mulligan_kept.get(player_id)
+            if kept is not None and not kept.is_set():
+                kept.set()
 
     # ── IN_GAME — priority-bearing actions ───────────────────────────────
 
@@ -1322,28 +1340,38 @@ class GameLifecycle:
         then the ready-state is reset so PLAYER_READYs sent in response
         to GAME_OVER (which may arrive while the engine is still
         unwinding) are counted for the next game's lobby.
+
+        ``_game_over`` is set in a ``finally`` so a failed send mid-
+        broadcast cannot abort the unwinding (which would delay it to the
+        watchdog/priority timeout and re-broadcast GAME_OVER(DISCONNECT)
+        over a real CONCEDE/WIN).  Concurrent callers (concede + watchdog
+        + timeout) are deduped by the early ``is_set()`` check.
         """
+        if self._game_over.is_set():
+            return  # Already ending — dedupe concurrent game-over sources.
+
         pdu = create_game_over(
             seq_num=0,
             winner_id=winner_id,
             loser_id=loser_id,
             reason=reason,
         )
-        await self.broadcast(pdu)
+        try:
+            await self.broadcast(pdu)
+        finally:
+            # Reset ready-state for the next game.
+            gs.players_ready = 0
+            gs.player_ids.clear()
+            gs.waiting_for = []
+            for conn in self.connections:
+                conn.player_id = None
+            self._deck_lists.clear()
+            self._player_index.clear()
+            self._mulligan_kept.clear()
+            self._mulligan_expected_seq.clear()
+            gs.mulligan_counts.clear()
 
-        # Reset ready-state for the next game.
-        gs.players_ready = 0
-        gs.player_ids.clear()
-        gs.waiting_for = []
-        for conn in self.connections:
-            conn.player_id = None
-        self._deck_lists.clear()
-        self._player_index.clear()
-        self._mulligan_kept.clear()
-        self._mulligan_expected_seq.clear()
-        gs.mulligan_counts.clear()
-
-        self._game_over.set()
+            self._game_over.set()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Internal helpers
@@ -1368,7 +1396,9 @@ class GameLifecycle:
         for pid in gs.player_ids:
             if gs.life_totals.get(pid, 20) <= 0:
                 winner = self._opponent(pid) or ""
-                asyncio.ensure_future(
+                # Store the task: an un-stored ensure_future can be GC'd
+                # mid-run, silently losing the game-over broadcast.
+                self._pending_end_task = asyncio.ensure_future(
                     self._end_game(gs, "LIFE_ZERO", winner, pid)
                 )
                 return True
@@ -1376,7 +1406,7 @@ class GameLifecycle:
             if gs._draw_failed_for == pid:
                 gs._draw_failed_for = None  # Clear after consuming.
                 winner = self._opponent(pid) or ""
-                asyncio.ensure_future(
+                self._pending_end_task = asyncio.ensure_future(
                     self._end_game(gs, "DECK_EMPTY", winner, pid)
                 )
                 return True

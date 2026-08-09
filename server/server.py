@@ -88,7 +88,15 @@ class GameServer:
                             c.player_id or "",
                         )
                     else:
-                        lifecycle._game_over.set()
+                        # Both connections are dead.  Still route through
+                        # _end_game (with an empty winner) so the
+                        # ready-state reset runs: a bare _game_over.set()
+                        # would leave stale players_ready/conn.player_id,
+                        # making the next LOBBY skip the READY wait and
+                        # then send to dead sockets.
+                        await lifecycle._end_game(
+                            lifecycle.gs, "DISCONNECT", "", c.player_id or "",
+                        )
                     return True
         return False
 

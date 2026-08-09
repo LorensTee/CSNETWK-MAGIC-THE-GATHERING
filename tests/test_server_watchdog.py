@@ -103,7 +103,18 @@ class TestWatchdogSweep:
             winner = FakeConn("p2", closed=True)
             server._connections = [loser, winner]
 
-            lifecycle = SimpleNamespace(_game_over=asyncio.Event())
+            end_args = {}
+
+            async def fake_end_game(gs, reason, winner_id, loser_id):
+                end_args.update(reason=reason, winner_id=winner_id,
+                                loser_id=loser_id)
+                lifecycle._game_over.set()
+
+            lifecycle = SimpleNamespace(
+                _game_over=asyncio.Event(),
+                _end_game=fake_end_game,
+                gs=SimpleNamespace(),
+            )
             disconnect_times = {loser: time.time() - 10}
 
             ended = await server._watchdog_sweep(lifecycle, disconnect_times)
@@ -111,5 +122,11 @@ class TestWatchdogSweep:
             assert ended is True
             assert lifecycle._game_over.is_set()
             assert winner.sent == []  # nobody to broadcast to
+            # Both-dead branch still routes through _end_game so the
+            # ready-state reset runs (stale ready state would make the
+            # next LOBBY skip the READY wait and send to dead sockets).
+            assert end_args["reason"] == "DISCONNECT"
+            assert end_args["winner_id"] == ""
+            assert end_args["loser_id"] == "p1"
 
         asyncio.run(scenario())

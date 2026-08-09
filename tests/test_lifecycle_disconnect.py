@@ -22,6 +22,10 @@ def _make_lifecycle() -> GameLifecycle:
     lc.gs = GameState()
     lc._game_over = asyncio.Event()
     lc._pending_pdu: dict[str, asyncio.Future] = {}
+    lc._deck_lists = {}
+    lc._player_index = {}
+    lc._mulligan_kept = {}
+    lc._mulligan_expected_seq = {}
     return lc
 
 
@@ -135,3 +139,71 @@ class TestGameOverReset:
         assert lc.gs.hands == {}
         assert lc.gs.libraries == {}
         assert lc.gs.graveyards == {}
+
+
+class TestEndGameRobustness:
+    """Review findings: _end_game must dedupe concurrent calls, set
+    _game_over even when a broadcast send fails, and never leave the
+    mulligan bookkeeping in a stale state."""
+
+    def test_end_game_dedupes_concurrent_calls(self):
+        lc = _make_lifecycle()
+        lc.connections = []
+        calls = []
+
+        async def scenario():
+            await lc._end_game(lc.gs, "CONCEDE", "p2", "p1")
+            await lc._end_game(lc.gs, "DISCONNECT", "p1", "p2")
+            assert lc._game_over.is_set()
+
+        # Patch broadcast to record call count.
+        async def fake_broadcast(pdu):
+            calls.append(pdu)
+
+        lc.broadcast = fake_broadcast
+        asyncio.run(scenario())
+        # The second _end_game call is deduped: only one GAME_OVER.
+        assert len(calls) == 1
+
+    def test_end_game_sets_game_over_even_if_broadcast_raises(self):
+        lc = _make_lifecycle()
+        lc.connections = []
+
+        async def failing_broadcast(pdu):
+            raise ConnectionError("socket died mid-send")
+
+        lc.broadcast = failing_broadcast
+
+        async def scenario():
+            with pytest.raises(ConnectionError):
+                await lc._end_game(lc.gs, "CONCEDE", "p2", "p1")
+            # The game-over flag and ready-state reset still ran.
+            assert lc._game_over.is_set()
+            assert lc.gs.players_ready == 0
+
+        asyncio.run(scenario())
+
+    def test_keep_after_game_over_does_not_touch_reset_dicts(self):
+        """A MULLIGAN_CHOICE dispatched after _end_game's reset must not
+        KeyError on the cleared _mulligan_kept nor re-seed
+        _mulligan_expected_seq (which would STALE-reject the next game)."""
+        lc = _make_lifecycle()
+        lc.connections = []
+        lc.gs.phase = "MULLIGAN"
+        lc._game_over.set()  # Game already ended.
+        lc._mulligan_kept = {}
+        lc._mulligan_expected_seq = {}
+        lc.gs.player_ids = ["p1", "p2"]
+        lc.gs.life_totals = {"p1": 20, "p2": 20}
+
+        async def scenario():
+            conn = SimpleNamespace(player_id="p1", seq_num=5)
+            await lc.handle_mulligan_choice(
+                conn,
+                {"type": "MULLIGAN_CHOICE", "seq_num": 3,
+                 "player_id": "p1", "keep": True, "cards_to_bottom": []},
+            )
+            assert lc._mulligan_expected_seq == {}
+            assert lc._mulligan_kept == {}
+
+        asyncio.run(scenario())
