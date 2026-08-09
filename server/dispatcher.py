@@ -44,6 +44,23 @@ _HANDLER_MAP: dict[str, str] = {
     "PING": "handle_ping",
 }
 
+# Client-to-server action PDUs that are only legal while the sender holds
+# priority (RFC §5.4).  MULLIGAN_CHOICE is deliberately excluded: it is
+# answered on the handler path with its own GAME_STATE_UPDATE seq echo
+# (RFC §5.4), and PLAYER_READY/PING/PONG/CONCEDE have their own rules.
+_PRIORITY_BEARING_TYPES = frozenset({
+    "CAST_SPELL",
+    "ACTIVATE_ABILITY",
+    "PRIORITY_PASS",
+    "DECLARE_ATTACKERS",
+    "DECLARE_BLOCKERS",
+    "ASSIGN_DAMAGE_ORDER",
+    "PLAY_LAND",
+    "DISCARD",
+    "TRIGGER_ORDER_RESPONSE",
+    "TRIGGER_CHOICE_RESPONSE",
+})
+
 
 async def dispatch(
     lifecycle: GameLifecycle,
@@ -129,6 +146,19 @@ async def dispatch(
         if not future.done():
             future.set_result(pdu)
             return
+
+    # ── 2b. Out-of-window actions → NOT_YOUR_PRIORITY (RFC §11) ─────────
+    # A priority-bearing action PDU that arrives while the sender has no
+    # pending priority window must be answered with NOT_YOUR_PRIORITY and
+    # discarded (never silently dropped), leaving game state unchanged.
+    if pid and pdu_type in _PRIORITY_BEARING_TYPES:
+        await lifecycle.send_error(
+            conn,
+            "NOT_YOUR_PRIORITY",
+            f"Action '{pdu_type}' submitted when {pid} does not hold priority.",
+            pdu,
+        )
+        return
 
     # ── 3. Normal handler path ─────────────────────────────────────────
     pdu["_player_id"] = pid
