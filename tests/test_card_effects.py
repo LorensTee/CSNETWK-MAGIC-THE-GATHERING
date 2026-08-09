@@ -347,3 +347,29 @@ class TestTapAbilities:
         # Explicit error, no silent tap-and-nothing.
         assert lc.errors == ["ILLEGAL_ACTION"]
         assert gs.battlefield["p1"][0].tapped is False
+
+
+class TestLibraryDraw:
+    """Spell draws must come from the library TOP (index 0), matching the
+    draw-step path and the GameState convention ("index 0 = top")."""
+
+    def test_effect_draw_pulls_from_top(self):
+        from server.card_effects import _apply_draw
+
+        gs = _make_gs()
+        gs.libraries["p1"] = ["top_card", "mid_card", "bottom_card"]
+
+        _apply_draw(gs, "p1", 1)
+
+        assert gs.hands["p1"] == ["top_card"]
+        assert gs.libraries["p1"] == ["mid_card", "bottom_card"]
+
+    def test_effect_draw_multiple_keeps_order(self):
+        from server.card_effects import _apply_draw
+
+        gs = _make_gs()
+        gs.libraries["p1"] = ["a", "b", "c"]
+
+        _apply_draw(gs, "p1", 2)
+
+        assert gs.hands["p1"] == ["a", "b"]

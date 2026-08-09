@@ -133,8 +133,9 @@ def _apply_draw(gs: GameState, player_id: str, amount: int = 1) -> None:
     for _ in range(amount):
         # Make sure they actually have a deck left!
         if player_id in gs.libraries and gs.libraries[player_id]:
-            # Use pop() to draw from the "top" (end of the list)
-            drawn_card = gs.libraries[player_id].pop() 
+            # The library TOP is index 0 (GameState convention), matching
+            # the draw-step path in turn_engine._handle_draw.
+            drawn_card = gs.libraries[player_id].pop(0)
             
             if player_id not in gs.hands:
                 gs.hands[player_id] = []
