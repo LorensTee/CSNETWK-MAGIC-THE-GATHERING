@@ -181,15 +181,25 @@ class StackManager:
             "stack_item_id": item.stack_item_id,
             "card_id": item.source,
         }
+        if getattr(item, "source_permanent", ""):
+            extra["source_permanent"] = item.source_permanent
         if card_loader is not None:
             extra["card_loader"] = card_loader
 
         if card_def is not None:
             base_id = getattr(card_def, "card_id_base", "")
             if not base_id:
-                base_id = item.source.rsplit("_", 1)[0] if "_" in item.source else item.source
+                base_id = item.source
+                if "_" in base_id:
+                    parts = base_id.rsplit("_", 1)
+                    if parts[1].isdigit():
+                        base_id = parts[0]
         else:
-            base_id = item.source.rsplit("_", 1)[0] if "_" in item.source else item.source
+            base_id = item.source
+            if "_" in base_id:
+                parts = base_id.rsplit("_", 1)
+                if parts[1].isdigit():
+                    base_id = parts[0]
 
         # 1. Cast the spell and do the math
         state_changes = resolve_effect(
@@ -207,6 +217,39 @@ class StackManager:
         state_changes.extend(sba_changes)
 
         return "RESOLVED", state_changes
+
+    def push_trigger(
+        self,
+        gs: GameState,
+        effect_base_id: str,
+        controller: str,
+        targets: list[str] | None = None,
+        source_permanent: str = "",
+    ) -> StackItem:
+        """Put a triggered ability (RFC §8.6.1) onto the stack.
+
+        Parameters
+        ----------
+        effect_base_id :
+            Pseudo base id resolving to the trigger's effect handler
+            (e.g. ``'goblin_guide_trigger'``).
+        source_permanent :
+            Instance id of the permanent whose ability triggered (used by
+            effects that need the source, e.g. prowess pumps).
+        """
+        gs.stack_counter += 1
+        item = StackItem(
+            stack_item_id=f"stk_{gs.stack_counter:02d}",
+            item_type="TRIGGER_ABILITY",
+            source=effect_base_id,
+            controller=controller,
+            targets=targets or [],
+            card_def=None,
+        )
+        if source_permanent:
+            item.source_permanent = source_permanent
+        gs.stack.append(item)
+        return item
 
     def is_empty(self, gs: GameState) -> bool:
         """Return ``True`` if the stack has no items."""

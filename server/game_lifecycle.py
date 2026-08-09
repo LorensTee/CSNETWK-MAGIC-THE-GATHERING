@@ -428,6 +428,9 @@ class GameLifecycle:
                         f"Invalid attackers: {reasons}.",
                         action,
                     )
+
+                # RFC §8.6.1: attack triggers (Goblin Guide) go on the stack.
+                await self._maybe_push_attack_triggers(gs, ap_id, nap_id)
                 
             await self._broadcast_game_state(gs) 
 
@@ -777,6 +780,10 @@ class GameLifecycle:
             )
             await self.broadcast(pdu)
 
+            # RFC §8.6.1: prowess triggers (Monastery Swiftspear) fire when
+            # a noncreature spell is cast.
+            await self._maybe_push_cast_triggers(gs, pid, card_def)
+
         elif atype == "PLAY_LAND":
             print("\n🚪 ENTERED PLAY_LAND BLOCK")
             try:
@@ -911,6 +918,68 @@ class GameLifecycle:
             
             # Broadcast the state update so the client sees the tapped land
             await self._broadcast_game_state(gs)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Triggered abilities (RFC §8.6.1)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def _maybe_push_attack_triggers(
+        self, gs: GameState, ap_id: str, nap_id: str
+    ) -> None:
+        """Put ATTACKS triggers (Goblin Guide) on the stack for every
+        attacking permanent whose registry entry fires on that event."""
+        from server.card_effects import check_triggers
+
+        for cid in list(self.combat_mgr.attackers):
+            perm = None
+            for perms in gs.battlefield.values():
+                for p in perms:
+                    if p.id == cid:
+                        perm = p
+                        break
+            if perm is None:
+                continue
+            for trg in check_triggers(gs, "ATTACKS", cid, ap_id):
+                if trg["source"] != cid:
+                    continue  # only the attacking permanent triggers
+                si = self.stack_mgr.push_trigger(
+                    gs, f"{perm.card_def_id}_trigger", ap_id,
+                    targets=[nap_id], source_permanent=cid,
+                )
+                pdu = create_stack_push(
+                    seq_num=0,
+                    stack_item_id=si.stack_item_id,
+                    item_type="TRIGGER_ABILITY",
+                    source=perm.card_def_id,
+                    targets=[nap_id],
+                    controller=ap_id,
+                )
+                await self.broadcast(pdu)
+
+    async def _maybe_push_cast_triggers(
+        self, gs: GameState, pid: str, card_def: Any
+    ) -> None:
+        """Put CAST_NONCREATURE_SPELL triggers (Monastery Swiftspear
+        prowess) on the stack when a noncreature spell is cast."""
+        from server.card_effects import check_triggers
+
+        ctype = getattr(card_def, "card_type", "") if card_def else ""
+        if "creature" in ctype.lower():
+            return
+        for trg in check_triggers(gs, "CAST_NONCREATURE_SPELL", "", pid):
+            si = self.stack_mgr.push_trigger(
+                gs, "monastery_swiftspear_trigger", pid,
+                targets=[], source_permanent=trg["source"],
+            )
+            pdu = create_stack_push(
+                seq_num=0,
+                stack_item_id=si.stack_item_id,
+                item_type="TRIGGER_ABILITY",
+                source="monastery_swiftspear",
+                targets=[],
+                controller=pid,
+            )
+            await self.broadcast(pdu)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PDU handler methods (called by dispatcher)

@@ -262,6 +262,59 @@ def _apply_spawn_permanent(gs, controller: str, card_id: str, card_loader: Any =
 # ── Effect handler implementations ───────────────────────────────────────────
 
 
+def _effect_goblin_guide_trigger(
+    gs: GameState,
+    controller: str,
+    targets: list[str],
+    abilities: list[dict[str, Any]],
+    extra: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Goblin Guide attack trigger (RFC §8.6.1): the defending player
+    reveals the top card of their library; if it is a land, they put it
+    into their hand, otherwise it goes to the graveyard."""
+    opponent = next((pid for pid in gs.player_ids if pid != controller), None)
+    if opponent is None:
+        return []
+    lib = gs.libraries.get(opponent, [])
+    if not lib:
+        return [{"change_type": "REVEAL", "player": opponent, "card_id": None}]
+
+    revealed = lib.pop(0)
+    changes = [
+        {"change_type": "REVEAL", "player": opponent, "card_id": revealed},
+    ]
+    loader = extra.get("card_loader")
+    cd = loader.get_card(revealed) if loader is not None else None
+    is_land = cd is not None and "land" in (cd.card_type or "").lower()
+    if is_land:
+        gs.hands.setdefault(opponent, []).append(revealed)
+        changes.append(
+            {"change_type": "LAND_TO_HAND", "player": opponent, "card_id": revealed}
+        )
+    else:
+        gs.graveyards.setdefault(opponent, []).append(revealed)
+        changes.append(
+            {"change_type": "REVEALED_TO_GRAVEYARD", "player": opponent,
+             "card_id": revealed}
+        )
+    return changes
+
+
+def _effect_monastery_swiftspear_trigger(
+    gs: GameState,
+    controller: str,
+    targets: list[str],
+    abilities: list[dict[str, Any]],
+    extra: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Monastery Swiftspear prowess trigger (RFC §8.6.1): +1/+1 until end
+    of turn after its controller casts a noncreature spell."""
+    source = extra.get("source_permanent") or extra.get("card_id", "")
+    _apply_pump(gs, source, 1, 1)
+    return [{"change_type": "PUMP", "target": source, "power": 1,
+             "toughness": 1}]
+
+
 def _effect_lightning_bolt(
     gs: GameState,
     controller: str,
@@ -860,10 +913,12 @@ EFFECT_HANDLERS: dict[str, EffectHandler] = {
     "rift_bolt": _effect_rift_bolt,
     "incinerate": _effect_incinerate,
     # Red — Creatures
-    "goblin_guide": _effect_vanilla_creature,  # Triggered ability (attack reveal) not implemented
+    "goblin_guide": _effect_vanilla_creature,  # ATTACKS trigger (RFC §8.6.1)
+    "goblin_guide_trigger": _effect_goblin_guide_trigger,
     "goblin_bushwhacker": _effect_vanilla_creature,  # Kicker not automatically handled
     "reckless_wurm": _effect_vanilla_creature,
-    "monastery_swiftspear": _effect_vanilla_creature,  # Prowess tracked via keyword
+    "monastery_swiftspear": _effect_vanilla_creature,  # Prowess via trigger
+    "monastery_swiftspear_trigger": _effect_monastery_swiftspear_trigger,
     "wall_of_stone": _effect_vanilla_creature,
     # Blue — Counters / Bounce
     "counterspell": _effect_counterspell,
