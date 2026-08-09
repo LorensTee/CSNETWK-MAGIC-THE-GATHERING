@@ -62,9 +62,10 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
                 # --- THE FIX: Strip the _001 suffix to get the raw card name! ---
                 base_id = dead_id.rsplit("_", 1)[0] if "_" in dead_id else dead_id
                 
-                # 3. Append the raw card name to the graveyard so the UI can read it
-                gs.graveyard[player_id].append(base_id)
-                # ----------------------------------------------------------------
+                # 3. Append the INSTANCE id to the graveyard (matches the
+                #    combat path and build_visible_state, which read
+                #    gs.graveyards; spec §8.4 keeps the object's identity).
+                gs.graveyards.setdefault(player_id, []).append(dead_id)
                 
                 sba_changes.append({
                     "type": "ZONE_CHANGE",
