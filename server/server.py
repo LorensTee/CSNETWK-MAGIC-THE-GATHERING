@@ -63,11 +63,13 @@ class GameServer:
     ) -> bool:
         """One disconnect-timeout sweep pass.
 
-        If a closed connection has exceeded *disconnect_timeout_s*, broadcast
-        GAME_OVER(DISCONNECT) to the surviving player and return ``True``.
-        The GAME_OVER goes through ``send_pdu`` (RFC §10.2.22) so it is
-        seq-numbered and visible in verbose mode (rubric prerequisite), and
-        the winner's socket is NOT closed — RFC §6.6 retains connections
+        If a closed connection has exceeded *disconnect_timeout_s*,
+        broadcast GAME_OVER(DISCONNECT) to the surviving player and
+        return ``True``.  Routing through ``lifecycle._end_game`` keeps
+        the GAME_OVER seq-numbered via ``send_pdu`` (RFC §10.2.22,
+        verbose-mode rubric prerequisite), resets the ready-state for the
+        next LOBBY, and signals the engine to unwind gracefully.  The
+        winner's socket is NOT closed — RFC §6.6 retains connections
         after GAME_OVER for the next LOBBY.
         """
         for i, c in enumerate(self._connections):
@@ -80,16 +82,13 @@ class GameServer:
                     winner_conn = self._connections[1 - i]
 
                     if not getattr(winner_conn, '_closed', False):
-                        go_pdu = {
-                            "type": "GAME_OVER",
-                            "seq_num": winner_conn.seq_num,  # send_pdu overwrites
-                            "winner_id": winner_conn.player_id,
-                            "loser_id": c.player_id,
-                            "reason": "DISCONNECT",
-                        }
-                        await winner_conn.send_pdu(go_pdu)
-
-                    lifecycle._game_over.set()
+                        await lifecycle._end_game(
+                            lifecycle.gs, "DISCONNECT",
+                            winner_conn.player_id or "",
+                            c.player_id or "",
+                        )
+                    else:
+                        lifecycle._game_over.set()
                     return True
         return False
 

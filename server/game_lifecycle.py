@@ -306,6 +306,15 @@ class GameLifecycle:
             })
             await self.send_to(pid, gsu)
 
+        # Populate this game's zones from the stored deck lists.  READYs
+        # only store deck lists (handle_player_ready) so that the
+        # _run_game_over reset can never wipe the next game's zones.
+        for pid in gs.player_ids:
+            gs.libraries[pid] = list(self._deck_lists.get(pid, []))
+            gs.hands[pid] = []
+            gs.graveyards[pid] = []
+            gs.battlefield[pid] = []
+
         # Initialise mulligan events for this game session.
         for pid in gs.player_ids:
             self._mulligan_kept[pid] = asyncio.Event()
@@ -1107,11 +1116,12 @@ class GameLifecycle:
         if conn.player_id is None:
             conn.player_id = player_id
             gs.players_ready += 1
+        # Store ONLY the deck list here.  The in-game zones (libraries,
+        # hands, graveyards, battlefield) are populated by _run_setup:
+        # _run_game_over clears them after the previous game, and READYs
+        # may arrive while that reset is still pending — repopulating
+        # them here would let the reset wipe the next game's decks.
         self._deck_lists[player_id] = list(deck_list)
-        gs.libraries[player_id] = list(deck_list)
-        gs.hands[player_id] = []
-        gs.graveyards[player_id] = []
-        gs.battlefield[player_id] = []
         gs.waiting_for = [
             c.player_id for c in self.connections if c.player_id is None
         ]
@@ -1268,9 +1278,11 @@ class GameLifecycle:
                 return
 
     async def broadcast(self, pdu: dict[str, Any]) -> None:
-        """Send a PDU to all connected players."""
+        """Send a PDU to all connected players (skipping dead sockets —
+        a send to a closed connection raises, which would abort callers
+        like ``_end_game`` before they set ``_game_over``)."""
         for conn in self.connections:
-            if conn.player_id:
+            if conn.player_id and not getattr(conn, "_closed", False):
                 await conn.send_pdu(pdu)
 
     async def send_error(

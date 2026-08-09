@@ -62,7 +62,11 @@ class MiniClient:
     async def _pump_loop(self) -> None:
         while True:
             try:
-                pdu = await self._recv_raw()
+                # No timeout here: the pump is the stream's only reader and
+                # must survive quiet periods (e.g. while the server waits
+                # for the OTHER player's response).  A timed-out read would
+                # kill the pump and starve the queue permanently.
+                pdu = await self._recv_raw(timeout=None)
             except (ConnectionError, EOFError, OSError,
                     asyncio.IncompleteReadError, asyncio.TimeoutError):
                 return
@@ -131,10 +135,10 @@ class MiniClient:
                     and pdu.get("to_phase") == to_phase:
                 return pdu
 
-    async def wait_until_type(self, pdu_type: str) -> dict:
+    async def wait_until_type(self, pdu_type: str, timeout: float = 10.0) -> dict:
         """Receive PDUs until one of *pdu_type* arrives."""
         while True:
-            pdu = await self.recv()
+            pdu = await self.recv(timeout)
             if pdu.get("type") == pdu_type:
                 return pdu
 
@@ -242,6 +246,49 @@ async def run_game_phase(c1: MiniClient, c2: MiniClient,
     assert go1["reason"] in ("WIN", "LOSS", "CONCEDE", "DISCONNECT")
 
 
+async def run_disconnect_phase(c1: MiniClient, c2: MiniClient) -> None:
+    """Game 3: mulligan + first grant, then kill one player abruptly and
+    verify the survivor receives GAME_OVER(DISCONNECT) from the watchdog."""
+    for c in (c1, c2):
+        await c.send({
+            "type": "PLAYER_READY",
+            "seq_num": c.ready_seq,
+            "player_id": c.player_id,
+            "deck_list": DECK,
+        })
+    await c1.wait_until_phase("MULLIGAN")
+    await c2.wait_until_phase("MULLIGAN")
+
+    # Keep for both (echo the MULLIGAN GSU seq).
+    for c in (c1, c2):
+        await c.send_action({
+            "type": "MULLIGAN_CHOICE", "player_id": c.player_id,
+            "keep": True, "cards_to_bottom": [],
+        })
+    await c1.wait_until_phase("MULLIGAN")
+    await c2.wait_until_phase("MULLIGAN")
+
+    # Wait for the first PRIORITY_GRANT (game in progress), then kill p2.
+    for _ in range(50):
+        g1 = asyncio.create_task(c1.recv())
+        g2 = asyncio.create_task(c2.recv())
+        done, pending = await asyncio.wait(
+            {g1, g2}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        for p in pending:
+            p.cancel()
+        pdu = done.pop().result()
+        if pdu["type"] == "PRIORITY_GRANT":
+            break
+    c2.close()  # abrupt disconnect — no CONCEDE
+
+    # The watchdog (10 s disconnect timeout) ends the game for the survivor.
+    go = await c1.wait_until_type("GAME_OVER", timeout=15)
+    assert go["reason"] == "DISCONNECT", go.get("reason")
+    print(f"  OK: survivor got GAME_OVER reason={go['reason']} "
+          f"winner={go.get('winner_id')}", flush=True)
+
+
 async def main() -> int:
     server = subprocess.Popen(
         [sys.executable, "-m", "server.main",
@@ -269,12 +316,15 @@ async def main() -> int:
         # Re-ready on the SAME connections → second game's mulligan.
         await run_game_phase(c1, c2, log_lines)
 
+        # Game 3: disconnect scenario — watchdog GAME_OVER(DISCONNECT).
+        await run_disconnect_phase(c1, c2)
+
         c1.close()
         c2.close()
     except BaseException as exc:
         print(f"FAILED: {exc!r}", flush=True)
-        print("=== SERVER LOG (tail) ===", flush=True)
-        print("\n".join(log_lines[-40:]), flush=True)
+        print("=== SERVER LOG (FULL) ===", flush=True)
+        print("\n".join(log_lines), flush=True)
         raise
     finally:
         server.send_signal(signal.SIGINT)

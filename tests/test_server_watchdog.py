@@ -47,7 +47,18 @@ class TestWatchdogSweep:
             winner = FakeConn("p2", closed=False)
             server._connections = [loser, winner]
 
-            lifecycle = SimpleNamespace(_game_over=asyncio.Event())
+            end_args = {}
+
+            async def fake_end_game(gs, reason, winner_id, loser_id):
+                end_args.update(reason=reason, winner_id=winner_id,
+                                loser_id=loser_id)
+                lifecycle._game_over.set()
+
+            lifecycle = SimpleNamespace(
+                _game_over=asyncio.Event(),
+                _end_game=fake_end_game,
+                gs=SimpleNamespace(),
+            )
             disconnect_times = {loser: time.time() - 10}
 
             ended = await server._watchdog_sweep(lifecycle, disconnect_times)
@@ -55,14 +66,12 @@ class TestWatchdogSweep:
             assert ended is True
             assert lifecycle._game_over.is_set()
 
-            # GAME_OVER(DISCONNECT) went through send_pdu: seq-numbered.
-            assert winner.sent
-            go = winner.sent[-1]
-            assert go["type"] == "GAME_OVER"
-            assert go["reason"] == "DISCONNECT"
-            assert go["winner_id"] == "p2"
-            assert go["loser_id"] == "p1"
-            assert go["seq_num"] == 1
+            # GAME_OVER(DISCONNECT) is routed through _end_game, which
+            # broadcasts via send_pdu (seq-numbered, verbose-visible) and
+            # resets the ready-state for the next LOBBY.
+            assert end_args["reason"] == "DISCONNECT"
+            assert end_args["winner_id"] == "p2"
+            assert end_args["loser_id"] == "p1"
 
             # The winner's socket must NOT be closed (RFC §6.6 reuse).
             assert winner._closed is False
