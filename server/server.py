@@ -79,7 +79,7 @@ class GameServer:
             async def connection_manager():
                 import time, json, struct
                 disconnect_times = {}
-                print("🚨 [WATCHDOG] ONLINE AND SWEEPING!") # If you don't see this, the task is dead.
+                print("[WATCHDOG] ONLINE AND SWEEPING!") # If you don't see this, the task is dead.
                 
                 while not lifecycle._game_over.is_set():
                     try:
@@ -87,10 +87,10 @@ class GameServer:
                         for i, c in enumerate(self._connections):
                             if getattr(c, '_closed', False):
                                 if c not in disconnect_times:
-                                    print(f"⚠️ [WATCHDOG] Detected {c.player_id} crash! Starting {self.config.disconnect_timeout_s}s timer...")
+                                    print(f"[WATCHDOG] Detected {c.player_id} crash! Starting {self.config.disconnect_timeout_s}s timer...")
                                     disconnect_times[c] = time.time()
                                 elif time.time() - disconnect_times[c] > self.config.disconnect_timeout_s:
-                                    print(f"⏰ [WATCHDOG] {c.player_id} timed out! Nuking game.")
+                                    print(f"[WATCHDOG] {c.player_id} timed out! Nuking game.")
                                     winner_conn = self._connections[1 - i]
                                     
                                     if not getattr(winner_conn, '_closed', False):
@@ -121,7 +121,7 @@ class GameServer:
                                     new_conn.writer.close()
                                     break
                                 
-                                print(f"🔄 [RECONNECT] {old_conn.player_id} rejoined the game!")
+                                print(f"[RECONNECT] {old_conn.player_id} rejoined the game!")
                                 new_conn.player_id = old_conn.player_id
                                 new_conn.seq_num = old_conn.seq_num
                                 new_conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
@@ -135,7 +135,7 @@ class GameServer:
                                     await lifecycle._broadcast_game_state(lifecycle.gs)
                                 break
                     except Exception as e:
-                        print(f"🚨 [WATCHDOG CRASHED]: {e}")
+                        print(f"[WATCHDOG CRASHED]: {e}")
                         await asyncio.sleep(1)
 
             # 1. START THE WATCHDOG FIRST

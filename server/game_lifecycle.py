@@ -603,7 +603,7 @@ class GameLifecycle:
     ) -> None:
         """Process an action taken during a priority window."""
         atype = action.get("type", "")
-        print(f"\n🧠 BRAIN RECEIVED IT: {action}")
+        print(f"\nBRAIN RECEIVED IT: {action}")
         pid = action.get("_player_id", ap_id)
 
         if atype == "CAST_SPELL":

@@ -74,15 +74,15 @@ class CombatManager:
                 continue
 
             if perm.tapped:
-                print(f"⚠️ [Combat] Rejected {cid}: Already tapped!")
+                print(f"[Combat] Rejected {cid}: Already tapped!")
                 continue
 
             if getattr(perm, "summoning_sick", False):
-                print(f"⚠️ [Combat] Rejected {cid}: Summoning sickness!")
+                print(f"[Combat] Rejected {cid}: Summoning sickness!")
                 continue
 
             if not hasattr(perm, 'power') or perm.power is None:
-                print(f"⚠️ [Combat] Rejected {cid}: Not a creature!")
+                print(f"[Combat] Rejected {cid}: Not a creature!")
                 continue
 
             # ✅ SAFE TO ADD NOW!
