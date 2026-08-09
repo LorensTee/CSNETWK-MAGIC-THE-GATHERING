@@ -246,3 +246,104 @@ class TestSpawnKeywords:
         _apply_spawn_permanent(gs, "p1", "grizzly_bears_001", self.loader)
 
         assert gs.battlefield["p1"][0].summoning_sick is True
+
+
+class TestTapAbilities:
+    """Mana-ability production and explicit rejection of unimplemented
+    tap abilities (instead of a silent no-op that leaves the permanent
+    tapped)."""
+
+    @classmethod
+    def setup_class(cls):
+        from server.card_loader import CardLoader
+        cls.loader = CardLoader()
+        cls.loader.load()
+
+    def test_sol_ring_produces_two_colourless(self):
+        cd = self.loader.get_card("sol_ring")
+        tap = [a for a in cd.abilities if a.get("name") == "tap"][0]
+        assert tap["produces"] == {"C": 2}
+
+    def test_mountain_produces_one_red(self):
+        cd = self.loader.get_card("mountain")
+        tap = [a for a in cd.abilities if a.get("name") == "tap"][0]
+        assert tap["produces"] == {"R": 1}
+
+    def test_mana_ability_adds_to_activating_pool(self):
+        import asyncio
+        from types import SimpleNamespace
+
+        from server.game_lifecycle import GameLifecycle
+        from server.game_state import Permanent
+
+        gs = _make_gs()
+        gs.battlefield["p1"] = [
+            Permanent(id="sol_ring_001", card_def_id="sol_ring",
+                      controller="p1", power=0, toughness=0,
+                      abilities=self.loader.get_card("sol_ring").abilities),
+        ]
+        lc = GameLifecycle.__new__(GameLifecycle)
+        lc.gs = gs
+        lc.card_loader = self.loader
+        lc.errors = []
+        lc.broadcasts = 0
+
+        async def send_error(conn, code, message, action):
+            lc.errors.append(code)
+
+        async def broadcast(gs):
+            lc.broadcasts += 1
+
+        lc.send_error = send_error
+        lc._broadcast_game_state = broadcast
+        lc._connection_for = lambda pid: SimpleNamespace()
+
+        asyncio.run(lc._process_action(
+            gs, "p1", "p2",
+            {"type": "ACTIVATE_ABILITY", "source_id": "sol_ring_001",
+             "ability_index": 0},
+        ))
+
+        assert gs.mana_pools["p1"].C == 2
+        assert gs.battlefield["p1"][0].tapped is True
+        assert lc.errors == []
+
+    def test_unimplemented_tap_ability_errors_and_untaps(self):
+        import asyncio
+        from types import SimpleNamespace
+
+        from server.game_lifecycle import GameLifecycle
+        from server.game_state import Permanent
+
+        gs = _make_gs()
+        cd = self.loader.get_card("prodigal_sorcerer")
+        gs.battlefield["p1"] = [
+            Permanent(id="prodigal_001", card_def_id="prodigal_sorcerer",
+                      controller="p1", power=1, toughness=1,
+                      abilities=cd.abilities),
+        ]
+        lc = GameLifecycle.__new__(GameLifecycle)
+        lc.gs = gs
+        lc.card_loader = self.loader
+        lc.errors = []
+        lc.broadcasts = 0
+
+        async def send_error(conn, code, message, action):
+            lc.errors.append(code)
+
+        async def broadcast(gs):
+            lc.broadcasts += 1
+
+        lc.send_error = send_error
+        lc._broadcast_game_state = broadcast
+        lc._connection_for = lambda pid: SimpleNamespace()
+
+        asyncio.run(lc._process_action(
+            gs, "p1", "p2",
+            {"type": "ACTIVATE_ABILITY", "source_id": "prodigal_001",
+             "ability_index": 0},
+        ))
+
+        # Explicit error, no silent tap-and-nothing.
+        assert lc.errors == ["ILLEGAL_ACTION"]
+        assert gs.battlefield["p1"][0].tapped is False

@@ -237,23 +237,33 @@ class CardLoader:
             abilities.append({"type": "keyword", "name": "protection"})
 
         # Tap abilities
-        if "tap:" in effect or "tap:" in effect:
+        if "tap:" in effect:
 
             produces = {}
-            name = csv_row.get("Card Name", "").strip().lower()
+            # Count coloured/colourless mana symbols, e.g. "{c}{c}" → C:2.
+            for symbol, color in (
+                ("{r}", "R"), ("{g}", "G"), ("{u}", "U"),
+                ("{w}", "W"), ("{b}", "B"), ("{c}", "C"),
+            ):
+                count = effect.count(symbol)
+                if count:
+                    produces[color] = count
 
-            if "add r" in effect or "add {r}" in effect or name == "mountain":
-                produces["R"] = 1
-            elif "add g" in effect or "add {g}" in effect or name == "forest":
-                produces["G"] = 1
-            elif "add u" in effect or "add {u}" in effect or name == "island":
-                produces["U"] = 1
-            elif "add w" in effect or "add {w}" in effect or name == "plains":
-                produces["W"] = 1
-            elif "add b" in effect or "add {b}" in effect or name == "swamp":
-                produces["B"] = 1
-            elif "add 1" in effect or "add {c}" in effect:
-                produces["C"] = 1
+            # Fallback for plain-text effects without mana symbols.
+            if not produces:
+                name = csv_row.get("Card Name", "").strip().lower()
+                if "add r" in effect or "add {r}" in effect or name == "mountain":
+                    produces["R"] = 1
+                elif "add g" in effect or "add {g}" in effect or name == "forest":
+                    produces["G"] = 1
+                elif "add u" in effect or "add {u}" in effect or name == "island":
+                    produces["U"] = 1
+                elif "add w" in effect or "add {w}" in effect or name == "plains":
+                    produces["W"] = 1
+                elif "add b" in effect or "add {b}" in effect or name == "swamp":
+                    produces["B"] = 1
+                elif "add 1" in effect or "add {c}" in effect:
+                    produces["C"] = 1
 
             abilities.append({
                 "type": "activated", 

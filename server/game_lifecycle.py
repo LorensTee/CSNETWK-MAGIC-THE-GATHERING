@@ -811,7 +811,11 @@ class GameLifecycle:
                 return
 
             # 2. Get the card definition to find what it produces
-            base_id = source_id.rsplit("_", 1)[0] if "_" in source_id else source_id
+            base_id = source_id
+            if "_" in source_id:
+                parts = source_id.rsplit("_", 1)
+                if parts[1].isdigit():
+                    base_id = parts[0]
             cd = self.card_loader.get_card(base_id)
             
             if not cd or ability_index >= len(cd.abilities):
@@ -826,9 +830,24 @@ class GameLifecycle:
             # 3. Apply the cost (tapping)
             if ability.get("requires_tap"):
                 perm.tapped = True
-                
+
             # 4. Generate the mana! (into the activating player's own pool)
             produces = ability.get("produces", {})
+            if not produces:
+                # Not a mana ability.  MTGNP 1.0 does not implement combat
+                # tap-abilities (Prodigal Sorcerer, Royal Assassin, ...);
+                # answer explicitly instead of silently tapping with no
+                # effect — and roll the tap back.
+                perm.tapped = False
+                await self.send_error(
+                    self._connection_for(pid),
+                    "ILLEGAL_ACTION",
+                    f"Ability '{ability.get('name', '')}' on '{source_id}' is "
+                    "not implemented in MTGNP 1.0.",
+                    action,
+                )
+                return
+
             pool = gs.mana_pools.setdefault(pid, ManaPool.empty())
             for color, amount in produces.items():
                 current = getattr(pool, color, 0)
