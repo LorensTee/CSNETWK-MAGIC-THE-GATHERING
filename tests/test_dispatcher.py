@@ -179,6 +179,22 @@ class TestNotYourPriority:
 
         asyncio.run(scenario())
 
+    def test_unhashable_type_is_malformed_not_crash(self):
+        """A JSON object as 'type' must be rejected with MALFORMED_PDU,
+        not raise TypeError at the handler-map lookup (which would kill
+        the player's read loop)."""
+        async def scenario():
+            lc = FakeLifecycle()
+            conn = FakeConn("p1", seq_num=10)
+
+            craft = {"type": {"nested": True}, "seq_num": 10}
+            await dispatch(lc, conn, craft)
+
+            assert lc.errors and lc.errors[-1][0] == "MALFORMED_PDU"
+            assert lc.handled == []
+
+        asyncio.run(scenario())
+
 
 def test_create_grant_has_required_fields():
     grant = create_priority_grant(seq_num=7, player_id="p1", time_limit_ms=60000)

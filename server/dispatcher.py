@@ -87,7 +87,19 @@ async def dispatch(
             pdu
         )
         return
-    
+
+    # 'type' must be a string: an unhashable value (e.g. a JSON object)
+    # would raise TypeError at the handler-map lookup and kill the
+    # player's read loop (a cheap one-PDU DoS).
+    if not isinstance(pdu.get("type"), str):
+        await lifecycle.send_error(
+            conn,
+            "MALFORMED_PDU",
+            "The 'type' field must be a string.",
+            pdu
+        )
+        return
+
     pid = conn.player_id
     pdu_type = pdu.get("type", "")
     client_seq = pdu["seq_num"]
