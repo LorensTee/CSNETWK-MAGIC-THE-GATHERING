@@ -97,58 +97,83 @@ class PriorityManager:
         timeout = timeout_ms if timeout_ms is not None else self.config.time_limit_ms
         timeout_s = timeout / 1000.0
 
-        # Send the initial PRIORITY_GRANT (send_pdu sets seq_num automatically).
-        grant_pdu = create_priority_grant(
-            seq_num=0,  # placeholder — send_pdu overwrites this.
-            player_id=player_id,
-            time_limit_ms=timeout,
-        )
-        await conn.send_pdu(grant_pdu)
-        expected_seq = conn.seq_num
+        # Register the response waiter BEFORE sending the grant: with the
+        # real (yielding) connection, the read task starts during the
+        # grant's drain() — so a fast client reply can never race the
+        # pending-future registration.
+        read_task: asyncio.Task | None = None
+        if read_pdu is not None:
+            read_task = asyncio.create_task(read_pdu(player_id, timeout_s))
 
-        while True:
-            # Wait for response with timeout.
-            try:
-                if read_pdu is not None:
-                    response = await asyncio.wait_for(
-                        read_pdu(player_id, timeout_s), timeout=timeout_s
+        try:
+            # Send the initial PRIORITY_GRANT (send_pdu sets seq_num automatically).
+            grant_pdu = create_priority_grant(
+                seq_num=0,  # placeholder — send_pdu overwrites this.
+                player_id=player_id,
+                time_limit_ms=timeout,
+            )
+            await conn.send_pdu(grant_pdu)
+            expected_seq = conn.seq_num
+
+            while True:
+                # (Re-)register the waiter: initially before the grant, and
+                # again after a stale response consumed it (RFC §11.3 retry).
+                if read_task is None and read_pdu is not None:
+                    read_task = asyncio.create_task(read_pdu(player_id, timeout_s))
+
+                # Wait for response with timeout.
+                try:
+                    if read_task is not None:
+                        response = await asyncio.wait_for(
+                            asyncio.shield(read_task), timeout=timeout_s
+                        )
+                    else:
+                        response = await asyncio.wait_for(
+                            conn.recv_pdu(), timeout=timeout_s
+                        )
+                except asyncio.TimeoutError:
+                    raise PriorityTimeout(player_id) from None
+                except (ProtocolError, ConnectionError, EOFError, OSError) as exc:
+                    raise ConnectionLost(player_id) from exc
+
+                # Validate seq_num.
+                actual = response.get("seq_num", -1)
+                if not validate_seq_num(expected_seq, actual):
+                    # RFC §11.3: reject with STALE_ACTION and re-issue the SAME
+                    # token (same seq_num, no counter consumption) so the player
+                    # can retry.  The ERROR echoes the rejected action's seq_num
+                    # per RFC §10.2.23.  The consumed waiter is re-registered
+                    # on the next iteration (fresh read for the retry).
+                    err_pdu = create_error(
+                        seq_num=actual,
+                        code="STALE_ACTION",
+                        message=(
+                            f"Priority token mismatch. "
+                            f"Expected {expected_seq}, got {actual}."
+                        ),
+                        rejected_action=response,
                     )
-                else:
-                    response = await asyncio.wait_for(
-                        conn.recv_pdu(), timeout=timeout_s
+                    await conn.send_pdu_explicit(err_pdu, actual)
+                    grant_pdu = create_priority_grant(
+                        seq_num=expected_seq,
+                        player_id=player_id,
+                        time_limit_ms=timeout,
                     )
-            except asyncio.TimeoutError:
-                raise PriorityTimeout(player_id) from None
-            except (ProtocolError, ConnectionError, EOFError, OSError) as exc:
-                raise ConnectionLost(player_id) from exc
+                    await conn.send_pdu_explicit(grant_pdu, expected_seq)
+                    read_task = None  # consumed; re-register for the retry
+                    continue
 
-            # Validate seq_num.
-            actual = response.get("seq_num", -1)
-            if not validate_seq_num(expected_seq, actual):
-                # RFC §11.3: reject with STALE_ACTION and re-issue the SAME
-                # token (same seq_num, no counter consumption) so the player
-                # can retry.  The ERROR echoes the rejected action's seq_num
-                # per RFC §10.2.23.
-                err_pdu = create_error(
-                    seq_num=actual,
-                    code="STALE_ACTION",
-                    message=(
-                        f"Priority token mismatch. "
-                        f"Expected {expected_seq}, got {actual}."
-                    ),
-                    rejected_action=response,
-                )
-                await conn.send_pdu_explicit(err_pdu, actual)
-                grant_pdu = create_priority_grant(
-                    seq_num=expected_seq,
-                    player_id=player_id,
-                    time_limit_ms=timeout,
-                )
-                await conn.send_pdu_explicit(grant_pdu, expected_seq)
-                continue  # Keep waiting on the same token.
-
-            # Return the response.
-            return response
+                # Return the response.
+                return response
+        finally:
+            if read_task is not None:
+                if not read_task.done():
+                    read_task.cancel()
+                elif not read_task.cancelled():
+                    try:
+                        read_task.exception()  # retrieve any latent error
+                    except asyncio.CancelledError:
+                        pass
 
     async def run_priority_window(
         self,

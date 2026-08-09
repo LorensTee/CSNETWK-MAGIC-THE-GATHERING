@@ -116,6 +116,40 @@ class TestGrantPriority:
         assert action is None
         assert actor is None
 
+    def test_read_pdu_started_before_grant_sent(self):
+        """The response waiter is registered BEFORE the grant is sent.
+
+        Uses a yielding send (like the real connection's drain()) and a
+        polling read: the ordering probe is deterministic.
+        """
+        conn = FakeConn()
+        pm = _make_manager()
+        order: list[str] = []
+
+        orig_send = conn.send_pdu
+
+        async def yielding_send(pdu):
+            conn.seq_num += 1
+            pdu["seq_num"] = conn.seq_num
+            await asyncio.sleep(0)  # drain yields before the frame commits
+            conn.sent.append(dict(pdu))
+            order.append("grant_sent")
+
+        conn.send_pdu = yielding_send
+
+        async def read_pdu(pid, timeout):
+            order.append("read_started")
+            while not any(p["type"] == "PRIORITY_GRANT" for p in conn.sent):
+                await asyncio.sleep(0)
+            grant = [p for p in conn.sent if p["type"] == "PRIORITY_GRANT"][-1]
+            return {"type": "PRIORITY_PASS", "seq_num": grant["seq_num"]}
+
+        response = asyncio.run(pm.grant_priority(conn, "p1", read_pdu=read_pdu))
+
+        assert response["type"] == "PRIORITY_PASS"
+        # The waiter started before the grant was committed to the wire.
+        assert order.index("read_started") < order.index("grant_sent")
+
     def test_timeout_raises_priority_timeout(self):
         conn = FakeConn()
         pm = _make_manager()
