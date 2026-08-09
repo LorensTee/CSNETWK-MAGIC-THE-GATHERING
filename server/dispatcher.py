@@ -94,28 +94,18 @@ async def dispatch(
 
     if pdu_type == "CONCEDE":
         print(f"🚨 [INTERRUPT] {pid} is conceding! Nuking the game engine...")
-        
+
         # 1. Broadcast the GAME_OVER and set the game_over flag
         winner_id = lifecycle._opponent(pid)
         if winner_id:
             await lifecycle._end_game(lifecycle.gs, "CONCEDE", winner_id, pid)
-        
-        # 2. DERAIL THE ENGINE
-        # By canceling the future instead of resolving it, we force an 
-        # asyncio.CancelledError inside the engine's wait loop. This instantly 
-        # kills the current phase and forces the engine to exit cleanly!
-        if pid in lifecycle._pending_pdu:
-            future = lifecycle._pending_pdu.pop(pid)
-            if not future.done():
-                future.cancel()  # <--- The magic bullet
-                
-        # Also cancel the opponent's future just in case the engine was waiting on them
-        opponent_id = lifecycle._opponent(pid)
-        if opponent_id and opponent_id in lifecycle._pending_pdu:
-            future = lifecycle._pending_pdu.pop(opponent_id)
-            if not future.done():
-                future.cancel()
 
+        # 2. The engine unwinds gracefully: _end_game set _game_over, so
+        # every wait_for_pdu race resolves the game-over branch, which
+        # raises GameOverInterrupt — the engine returns normally and the
+        # lifecycle resets for the next game.  (No future.cancel() here:
+        # CancelledError would propagate through the whole engine stack
+        # and kill the read loops, stranding the next game.)
         return
 
     # ── 2. Priority-wait path & STALE_ACTION Defense ────────────────────

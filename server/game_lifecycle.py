@@ -56,6 +56,17 @@ from shared.pdus import (
 
 from server.stack import check_state_based_actions
 
+
+class GameOverInterrupt(Exception):
+    """Raised inside the engine when the game ends while awaiting a PDU.
+
+    The CONCEDE / disconnect / timeout paths broadcast GAME_OVER and set
+    ``_game_over``; every engine await that is racing that event must
+    unwind *gracefully* (``return``), never propagate ``CancelledError``
+    or re-broadcast GAME_OVER.
+    """
+
+
 class GameLifecycle:
     """The game lifecycle state machine.
 
@@ -141,9 +152,12 @@ class GameLifecycle:
                 pdu = future.result()
                 pdu["_player_id"] = player_id
                 return pdu
-            # Either the game ended (watchdog/priority timeout) or the
-            # wait timed out — both surface as TimeoutError to the caller,
-            # which terminates the game with DISCONNECT.
+            # The game ended (watchdog/priority timeout or concede) —
+            # unwind the engine gracefully.  A genuine priority timeout
+            # surfaces as asyncio.TimeoutError from the race's *timeout*;
+            # a set game-over event surfaces here.
+            if self._game_over.is_set():
+                raise GameOverInterrupt()
             raise asyncio.TimeoutError()
         finally:
             game_over_task.cancel()
@@ -157,17 +171,29 @@ class GameLifecycle:
 
     async def run(self) -> None:
         """Run the full game lifecycle (LOBBY → … → GAME_OVER → loop)."""
-        while True:
-            self._game_over.clear()
-            gs = self.gs
-            conns = self.connections
-            if len(conns) < 2:
-                return  # Not enough connections — should not happen.
+        conns = self.connections
+        if len(conns) < 2:
+            return  # Not enough connections — should not happen.
 
-            # Start read loops for both connections (sole PDU readers).
-            async with asyncio.TaskGroup() as tg:
-                for conn in conns:
-                    tg.create_task(conn.read_loop())
+        # Clear the server-assigned temp ids (player_1/player_2, set at
+        # accept time for logging) so the first LOBBY counts PLAYER_READYs
+        # from scratch.  Per-game clearing happens in _end_game; the lobby
+        # itself must NOT clear conn.player_id, or READYs that arrived
+        # while the previous game was unwinding would be discarded.
+        for conn in conns:
+            conn.player_id = None
+
+        # Start read loops for both connections (sole PDU readers) ONCE
+        # for the lifecycle's whole lifetime.  They must NOT be recreated
+        # per game: cancelling a read_loop mid-readexactly (TaskGroup
+        # exit) leaves the StreamReader's internal waiter dangling, so
+        # the next read raises "readexactly() called while another
+        # coroutine is already waiting" and the next game hangs.
+        read_tasks = [asyncio.create_task(conn.read_loop()) for conn in conns]
+        try:
+            while True:
+                self._game_over.clear()
+                gs = self.gs
 
                 # LOBBY
                 await self._run_lobby(gs, conns)
@@ -190,6 +216,9 @@ class GameLifecycle:
                 # IN_GAME loop
                 await self._run_in_game(gs, conns)
                 await self._run_game_over(gs, conns)
+        finally:
+            for task in read_tasks:
+                task.cancel()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Lifecycle state runners
@@ -198,14 +227,16 @@ class GameLifecycle:
     async def _run_lobby(
         self, gs: GameState, conns: list[ServerConnection]
     ) -> None:
-        """LOBBY: wait for two PLAYER_READY PDUs."""
-        gs.phase = "LOBBY"
-        gs.player_ids.clear()
-        gs.players_ready = 0
-        gs.waiting_for = []
+        """LOBBY: wait for two PLAYER_READY PDUs.
 
-        for conn in conns:
-            conn.player_id = None
+        The ready-state (``players_ready``, ``conn.player_id``,
+        ``player_ids``, deck lists) is reset by ``_end_game`` *before* the
+        GAME_OVER broadcast, so READYs that arrive in response to
+        GAME_OVER are always counted for the next game.  Resetting here
+        instead would wipe READYs that arrived while the previous game's
+        engine was still unwinding, deadlocking the next lobby.
+        """
+        gs.phase = "LOBBY"
 
         while gs.players_ready < 2 and not self._game_over.is_set():
             await asyncio.sleep(0.1)  # Yield — dispatcher updates state.
@@ -247,6 +278,8 @@ class GameLifecycle:
                     response = await asyncio.wait_for(
                         self.wait_for_pdu(pid, timeout_s), timeout=timeout_s
                     )
+                except GameOverInterrupt:
+                    return
                 except (asyncio.TimeoutError, ConnectionError, ConnectionLost):
                     await self._end_game(
                         gs, "DISCONNECT", self._opponent(pid) or "", pid
@@ -316,15 +349,25 @@ class GameLifecycle:
         if kept_tasks:
             # A disconnect during MULLIGAN must not stall the lifecycle:
             # race the keep-waits against the game-over event.
+            # NOTE: wait for *all* keeps (RFC §6.2) — the mulligan may
+            # only end once every player has kept.  Two naive variants
+            # are both wrong: FIRST_COMPLETED ends the mulligan on the
+            # first keep (the second player's keep then races the turn
+            # start), and ALL_COMPLETED over the union also waits for the
+            # never-completing game-over task (deadlock).  Loop with
+            # FIRST_COMPLETED until no keep-wait remains pending.
+            keep_futures = {asyncio.ensure_future(t) for t in kept_tasks}
             game_over_task = asyncio.create_task(self._game_over.wait())
             try:
-                done, _ = await asyncio.wait(
-                    {asyncio.ensure_future(t) for t in kept_tasks}
-                    | {game_over_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if game_over_task not in done:
-                    return  # All players kept.
+                while keep_futures:
+                    done, pending = await asyncio.wait(
+                        keep_futures | {game_over_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if game_over_task in done:
+                        return  # Game over interrupted the mulligan.
+                    keep_futures = pending - {game_over_task}
+                return  # All players kept.
             finally:
                 game_over_task.cancel()
 
@@ -353,7 +396,14 @@ class GameLifecycle:
     async def _run_game_over(
         self, gs: GameState, conns: list[ServerConnection]
     ) -> None:
-        """GAME_OVER: reset game state for the next game."""
+        """GAME_OVER: reset game state for the next game.
+
+        The ready-state (``players_ready``, ``conn.player_id``,
+        ``player_ids``, deck lists) is reset in ``_end_game`` — NOT here —
+        so PLAYER_READYs arriving in response to the GAME_OVER broadcast
+        are counted for the next game instead of being wiped mid-unwind.
+        Only the in-game zones are reset here.
+        """
         gs.phase = "LOBBY"
         gs.turn = 0
         gs.stack.clear()
@@ -362,19 +412,12 @@ class GameLifecycle:
         gs.graveyards.clear()
         gs.battlefield.clear()
         gs.life_totals.clear()
-        gs.player_ids.clear()
         gs.land_played_this_turn = False
         gs.mulligan_counts.clear()
-        gs.waiting_for = []
-        gs.players_ready = 0
         gs.stack_counter = 0
         gs.mana_pools = {}
         gs._draw_failed_for = None
         gs._cleanup_discard_for = None
-        self._deck_lists.clear()
-        self._mulligan_kept.clear()
-        self._mulligan_expected_seq.clear()
-        self._player_index.clear()
         self.stack_mgr.clear_cache()
         self.combat_mgr.reset()
 
@@ -402,12 +445,15 @@ class GameLifecycle:
         # ── Combat sub-steps ─────────────────────────────────────────────
         if phase == "DECLARE_ATTACKERS":
             # Let the priority manager handle the UI prompt properly!
-            both, action = await self.priority_mgr.run_priority_window(
-                self._connection_for(ap_id),
-                self._connection_for(nap_id),
-                ap_id, nap_id,
-                read_pdu=self.wait_for_pdu,
-            )
+            try:
+                both, action = await self.priority_mgr.run_priority_window(
+                    self._connection_for(ap_id),
+                    self._connection_for(nap_id),
+                    ap_id, nap_id,
+                    read_pdu=self.wait_for_pdu,
+                )
+            except GameOverInterrupt:
+                return
             
             # If they typed "attack ..." or "no attacks", this catches it!
             if action and action.get("type") == "DECLARE_ATTACKERS":
@@ -445,12 +491,15 @@ class GameLifecycle:
             return
 
         if phase == "DECLARE_BLOCKERS":
-            both, action = await self.priority_mgr.run_priority_window(
-                self._connection_for(nap_id),
-                self._connection_for(ap_id),
-                nap_id, ap_id,
-                read_pdu=self.wait_for_pdu,
-            )
+            try:
+                both, action = await self.priority_mgr.run_priority_window(
+                    self._connection_for(nap_id),
+                    self._connection_for(ap_id),
+                    nap_id, ap_id,
+                    read_pdu=self.wait_for_pdu,
+                )
+            except GameOverInterrupt:
+                return
             
             if action and action.get("type") == "DECLARE_BLOCKERS":
                 blockers = action.get("blockers", [])
@@ -479,6 +528,8 @@ class GameLifecycle:
                     response = await self.priority_mgr.grant_priority(
                         conn, ap_id, read_pdu=self.wait_for_pdu,
                     )
+                except GameOverInterrupt:
+                    return
                 except (PriorityTimeout, ConnectionLost):
                     await self._end_game(
                         gs, "DISCONNECT",
@@ -569,6 +620,8 @@ class GameLifecycle:
                 response = await asyncio.wait_for(
                     self.wait_for_pdu(pid, timeout_s), timeout=timeout_s
                 )
+            except GameOverInterrupt:
+                return
             except (asyncio.TimeoutError, PriorityTimeout, ConnectionLost,
                     ConnectionError):
                 await self._end_game(
@@ -658,6 +711,8 @@ class GameLifecycle:
                     read_pdu=self.wait_for_pdu,
                     on_ap_pass_cb=flip_to_second,
                 )
+            except GameOverInterrupt:
+                return
             except PriorityTimeout as exc:
                 winner = second_id if exc.player_id == first_id else first_id
                 await self._end_game(gs, "DISCONNECT", winner, exc.player_id)
@@ -994,8 +1049,11 @@ class GameLifecycle:
         player_id = pdu.get("player_id", "")
         deck_list = pdu.get("deck_list", [])
 
-        # 1. RECONNECT BYPASS
-        if self.gs.phase != "LOBBY":
+        # 1. RECONNECT BYPASS — only applies while a game is LIVE.  Once
+        # GAME_OVER has been broadcast (_game_over set), PLAYER_READYs are
+        # for the next game even though the engine is still unwinding
+        # (gs.phase is still the last in-game phase).
+        if self.gs.phase != "LOBBY" and not self._game_over.is_set():
             # If this socket already has an ID assigned by the Reconnect Watcher, 
             # they are just rejoining. Silently ignore this amnesia packet.
             if conn.player_id is not None:
@@ -1245,7 +1303,14 @@ class GameLifecycle:
         winner_id: str,
         loser_id: str,
     ) -> None:
-        """Broadcast GAME_OVER and signal the game loop to stop."""
+        """Broadcast GAME_OVER and signal the game loop to stop.
+
+        The broadcast happens FIRST (while ``conn.player_id`` values are
+        still intact — ``broadcast()`` skips connections without an id),
+        then the ready-state is reset so PLAYER_READYs sent in response
+        to GAME_OVER (which may arrive while the engine is still
+        unwinding) are counted for the next game's lobby.
+        """
         pdu = create_game_over(
             seq_num=0,
             winner_id=winner_id,
@@ -1253,6 +1318,19 @@ class GameLifecycle:
             reason=reason,
         )
         await self.broadcast(pdu)
+
+        # Reset ready-state for the next game.
+        gs.players_ready = 0
+        gs.player_ids.clear()
+        gs.waiting_for = []
+        for conn in self.connections:
+            conn.player_id = None
+        self._deck_lists.clear()
+        self._player_index.clear()
+        self._mulligan_kept.clear()
+        self._mulligan_expected_seq.clear()
+        gs.mulligan_counts.clear()
+
         self._game_over.set()
 
     # ═══════════════════════════════════════════════════════════════════════════

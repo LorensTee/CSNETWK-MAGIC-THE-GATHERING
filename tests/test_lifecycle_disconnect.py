@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from server.game_lifecycle import GameLifecycle
+from server.game_lifecycle import GameLifecycle, GameOverInterrupt
 from server.game_state import GameState
 
 
@@ -80,7 +80,10 @@ class TestPriorityWaitUnblocked:
 
             t = asyncio.create_task(set_over())
             start = _time.monotonic()
-            with pytest.raises(asyncio.TimeoutError):
+            # Game over must surface as GameOverInterrupt (not
+            # TimeoutError): the engine unwinds gracefully without
+            # re-broadcasting GAME_OVER as DISCONNECT.
+            with pytest.raises(GameOverInterrupt):
                 await lc.wait_for_pdu("p1", 30)  # inner timeout far away
             elapsed = _time.monotonic() - start
             t.cancel()
@@ -94,8 +97,12 @@ class TestPriorityWaitUnblocked:
 
 class TestGameOverReset:
 
-    def test_mulligan_expected_seq_cleared_between_games(self):
+    def test_ready_state_cleared_by_end_game(self):
+        """The ready-state reset lives in _end_game (it must run before
+        the next game's PLAYER_READYs are counted, even when they arrive
+        while the previous game's engine is still unwinding)."""
         lc = _make_lifecycle()
+        lc.connections = []  # _end_game broadcasts over connections
         lc._mulligan_expected_seq = {"p1": 7, "p2": 9}
         lc._deck_lists = {"p1": ["x"], "p2": ["y"]}
         lc._mulligan_kept = {"p1": asyncio.Event()}
@@ -103,8 +110,28 @@ class TestGameOverReset:
         lc.stack_mgr = SimpleNamespace(clear_cache=lambda: None)
         lc.combat_mgr = SimpleNamespace(reset=lambda: None)
 
+        async def scenario():
+            await lc._end_game(lc.gs, "CONCEDE", "p2", "p1")
+            assert lc._mulligan_expected_seq == {}
+            assert lc._deck_lists == {}
+            assert lc._player_index == {}
+            assert lc.gs.players_ready == 0
+            assert lc._game_over.is_set()
+
+        asyncio.run(scenario())
+
+    def test_zones_cleared_by_run_game_over(self):
+        lc = _make_lifecycle()
+        lc.gs.hands = {"p1": ["x"]}
+        lc.gs.libraries = {"p1": ["y"]}
+        lc.gs.graveyards = {"p1": ["z"]}
+        lc.gs.battlefield = {"p1": []}
+        lc.stack_mgr = SimpleNamespace(clear_cache=lambda: None)
+        lc.combat_mgr = SimpleNamespace(reset=lambda: None)
+
         asyncio.run(lc._run_game_over(lc.gs, []))
 
-        assert lc._mulligan_expected_seq == {}
         assert lc.gs.phase == "LOBBY"
-        assert lc.gs.players_ready == 0
+        assert lc.gs.hands == {}
+        assert lc.gs.libraries == {}
+        assert lc.gs.graveyards == {}

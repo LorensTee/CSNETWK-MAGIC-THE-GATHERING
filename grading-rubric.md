@@ -40,11 +40,11 @@ Your implementation will be evaluated both on protocol correctness and on your a
 
 **Deadline and Demo Date: 13th and 14th week** (exact date to be announced by your instructor). All group members must be present for the demo.
 
-**Verbose Mode Prerequisite** 
+**⚠️  Verbose Mode Prerequisite** 
 
 Your implementation must support a verbose mode that can be toggled on and off at runtime (e.g., via a command-line flag or startup argument). When enabled, verbose mode must print all PDUs sent and received, both client-side and server-side, to the console in a readable, clearly labelled format. **The MP will not be checked unless verbose mode is working and active during the demo.** **The MP will be an automatic zero.** Ensure both your client and server can be started in verbose mode before your checking slot. 
 
-**Grading Deductions**
+**⚠️  Grading Deductions**
 
 * If any question relating to the submitted work, including implementation decisions, protocol behaviour, socket programming, or AI-generated content, is not answered properly during the demo, deductions in grades may be given for up to a grade of zero.
 
@@ -119,7 +119,7 @@ Base points: 100; bonus: 20\. Verbose mode must be working before any criterion 
 
 | Category | Criterion | Points | Description |
 | ----- | ----- | :---: | ----- |
-| **PREREQUISITE — Verbose Mode (checking will not proceed without this):** Both the client and server must support a verbose mode that can be toggled on and off (e.g., via a command-line flag or startup argument). When enabled, all PDUs sent and received — on both the client side and the server side — must be printed to the console in a readable, clearly labelled format. **The MP will not be checked unless verbose mode is working and active during the demo.** |  |  |  |
+| **⚠️  PREREQUISITE — Verbose Mode (checking will not proceed without this):** Both the client and server must support a verbose mode that can be toggled on and off (e.g., via a command-line flag or startup argument). When enabled, all PDUs sent and received — on both the client side and the server side — must be printed to the console in a readable, clearly labelled format. **The MP will not be checked unless verbose mode is working and active during the demo.** |  |  |  |
 | **TCP Sockets &** **Networking** | **TCP Server Setup & Client Accept** | 10 | Correct TCP server socket creation on port 4444, binding, listening, and accepting exactly two client connections. Additional connections must be refused. Server must handle client disconnect/reconnect within the implementation-defined timeout. |
 |  | **Message Framing** | 5 | All PDUs are correctly framed with a 4-byte big-endian length prefix followed by a valid UTF-8 JSON payload. Receiver reads exactly the indicated byte count before attempting to parse. PDUs must not exceed 65,535 bytes. |
 |  | **PDU Structure & seq\_num** | 5 | Every PDU includes the required 'type' and 'seq\_num' fields. Priority-bearing client PDUs echo the correct seq\_num from the latest PRIORITY\_GRANT or server request PDU. Server rejects stale seq\_nums with ERROR code STALE\_ACTION. |
