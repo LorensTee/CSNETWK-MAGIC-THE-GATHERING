@@ -115,13 +115,13 @@ def validate_cast_spell(
         if len(state.stack) > 0:
             return False, "WRONG_PHASE", "Sorceries can only be cast with an empty stack."
 
-    # 4. Full mana validation.
-    if not can_pay(mana_payment, card_def.mana_cost, state.mana_pool):
-        # Dynamically fetch the player's actual pool for the error output
-        current_pool = state.mana_pool.get(player, {}) if isinstance(state.mana_pool, dict) else state.mana_pool
+    # 4. Full mana validation (against the acting player's own pool).
+    from server.mana import ManaPool
+    pool = state.mana_pools.get(player, ManaPool.empty())
+    if not can_pay(mana_payment, card_def.mana_cost, pool):
         return False, "INSUFFICIENT_MANA", (
             f"Insufficient mana. Spell requires {card_def.mana_cost}, "
-            f"but your available pool is {current_pool}."
+            f"but your available pool is {pool}."
         )
 
     # 5. Target validation based on card effect text.

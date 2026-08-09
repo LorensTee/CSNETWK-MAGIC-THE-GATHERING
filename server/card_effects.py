@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from server.game_state import GameState, Permanent
+from server.mana import ManaPool
 
 # ── Type alias for effect handlers ───────────────────────────────────────────
 
@@ -166,11 +167,10 @@ def _apply_destroy(gs: GameState, target_id: str) -> None:
 
 def _apply_add_mana(gs: GameState, player_id: str, mana_dict: dict[str, int]) -> None:
     """Helper to add floating mana directly to a player's pool."""
-    pool = gs.mana_pools.get(player_id)
-    if pool:
-        for color, amount in mana_dict.items():
-            current = getattr(pool, color, 0)
-            setattr(pool, color, current + amount)
+    pool = gs.mana_pools.setdefault(player_id, ManaPool.empty())
+    for color, amount in mana_dict.items():
+        current = getattr(pool, color, 0)
+        setattr(pool, color, current + amount)
 
 def _apply_raise_dead(gs: GameState, player_id: str, target_card_id: str) -> None:
     """Helper to move a card from the graveyard to the hand."""

@@ -28,7 +28,7 @@ from server.combat import CombatManager
 from server.config import ServerConfig
 from server.connection import ServerConnection
 from server.game_state import GameState, build_visible_state, Permanent
-from server.mana import deduct_mana, empty_pool_dict
+from server.mana import ManaPool, deduct_mana, empty_pool_dict
 from server.mulligan import process_mulligan_choice
 from server.priority import ConnectionLost, PriorityManager, PriorityTimeout
 from server.stack import StackManager
@@ -315,7 +315,7 @@ class GameLifecycle:
         gs.waiting_for = []
         gs.players_ready = 0
         gs.stack_counter = 0
-        gs.mana_pool = gs.mana_pool.empty()
+        gs.mana_pools = {}
         gs._draw_failed_for = None
         gs._cleanup_discard_for = None
         self._deck_lists.clear()
@@ -623,7 +623,8 @@ class GameLifecycle:
                 return
 
             try:
-                gs.mana_pool = deduct_mana(mana_payment, gs.mana_pool)
+                pool = gs.mana_pools.setdefault(pid, ManaPool.empty())
+                gs.mana_pools[pid] = deduct_mana(mana_payment, pool)
             except ValueError:
                 await self.send_error(
                     self._connection_for(pid),
@@ -753,13 +754,14 @@ class GameLifecycle:
             if ability.get("requires_tap"):
                 perm.tapped = True
                 
-            # 4. Generate the mana!
+            # 4. Generate the mana! (into the activating player's own pool)
             produces = ability.get("produces", {})
+            pool = gs.mana_pools.setdefault(pid, ManaPool.empty())
             for color, amount in produces.items():
-                current = getattr(gs.mana_pool, color, 0)
-                setattr(gs.mana_pool, color, current + amount)
-                
-            print(f"💧 MANA ADDED! Pool is now: W:{gs.mana_pool.W} U:{gs.mana_pool.U} B:{gs.mana_pool.B} R:{gs.mana_pool.R} G:{gs.mana_pool.G} C:{gs.mana_pool.C}")
+                current = getattr(pool, color, 0)
+                setattr(pool, color, current + amount)
+
+            print(f"💧 MANA ADDED! Pool is now: W:{pool.W} U:{pool.U} B:{pool.B} R:{pool.R} G:{pool.G} C:{pool.C}")
             
             # Broadcast the state update so the client sees the tapped land
             await self._broadcast_game_state(gs)

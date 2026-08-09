@@ -140,8 +140,12 @@ class GameState:
     mulligan_counts: dict[str, int] = field(default_factory=dict)
     """Number of mulligans taken per player."""
 
-    mana_pool: ManaPool = field(default_factory=ManaPool.empty)
-    """Floating mana available to the current active player."""
+    mana_pools: dict[str, ManaPool] = field(default_factory=dict)
+    """Floating mana per player (player_id → ManaPool).
+
+    Emptied at the start of every step/phase (MTG rule: unspent mana
+    empties as each step ends).
+    """
 
     # ── Lobby / setup ───────────────────────────────────────────────────
 

@@ -89,6 +89,11 @@ class TurnEngine:
             # (In MTG, the active player always gets the microphone first in a new phase)
             gs.priority_holder = ap_id
 
+            # MTG rule: unspent mana empties as each step/phase ends, so
+            # clear every player's pool before this phase begins.
+            for pid in list(gs.mana_pools):
+                gs.mana_pools[pid] = gs.mana_pools[pid].empty()
+
             # Broadcast transition.
             if self._advance_handler is not None and prev_phase != phase:
                 await self._advance_handler(gs, prev_phase, phase)
