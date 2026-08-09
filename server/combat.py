@@ -36,6 +36,10 @@ class CombatManager:
         self.damage_order: dict[str, list[str]] = {}
         # Track creatures that attacked this combat (for untap after combat).
         self._attacking_creatures: set[str] = set()
+        # Rejected attacker declarations: [{'creature_id', 'reason'}, ...].
+        # Surfaced to the caller so it can answer with ERROR ILLEGAL_ACTION
+        # (RFC §11) instead of silently dropping the declaration.
+        self.rejected_attackers: list[dict[str, str]] = []
 
     def reset(self) -> None:
         """Clear all combat state (called after combat phase resolves)."""
@@ -43,6 +47,7 @@ class CombatManager:
         self.blockers.clear()
         self.damage_order.clear()
         self._attacking_creatures.clear()
+        self.rejected_attackers.clear()
 
     def set_attackers(self, gs: GameState, player: str, attackers: list[dict[str, str]]) -> list[dict[str, Any]]:
         """Record and validate declared attackers.
@@ -62,6 +67,7 @@ class CombatManager:
         """
         self.attackers.clear()
         self._attacking_creatures.clear()
+        self.rejected_attackers.clear()
 
         changes: list[dict[str, Any]] = []
         for entry in attackers:
@@ -71,18 +77,40 @@ class CombatManager:
             perm = self._find_permanent(gs, player, cid)
 
             if not perm:
+                self.rejected_attackers.append({
+                    "creature_id": cid, "reason": "not_on_battlefield",
+                })
                 continue
 
             if perm.tapped:
                 print(f"[Combat] Rejected {cid}: Already tapped!")
+                self.rejected_attackers.append({
+                    "creature_id": cid, "reason": "tapped",
+                })
                 continue
 
             if getattr(perm, "summoning_sick", False):
                 print(f"[Combat] Rejected {cid}: Summoning sickness!")
+                self.rejected_attackers.append({
+                    "creature_id": cid, "reason": "summoning_sickness",
+                })
+                continue
+
+            if any(
+                a.get("type") == "keyword" and a.get("name") == "defender"
+                for a in getattr(perm, "abilities", [])
+            ):
+                print(f"[Combat] Rejected {cid}: Defender cannot attack!")
+                self.rejected_attackers.append({
+                    "creature_id": cid, "reason": "defender",
+                })
                 continue
 
             if not hasattr(perm, 'power') or perm.power is None:
                 print(f"[Combat] Rejected {cid}: Not a creature!")
+                self.rejected_attackers.append({
+                    "creature_id": cid, "reason": "not_a_creature",
+                })
                 continue
 
             # ✅ SAFE TO ADD NOW!

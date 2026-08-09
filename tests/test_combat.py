@@ -26,13 +26,15 @@ class TestDeclareAttackers:
         gs = _make_gs()
         cm = CombatManager()
         goblin = Permanent(id="gg_001", card_def_id="goblin_guide",
-                           controller="p1", power=2, toughness=2)
+                           controller="p1", power=2, toughness=2,
+                           summoning_sick=False)  # controlled since turn start
         gs.battlefield["p1"].append(goblin)
 
         changes = cm.set_attackers(gs, "p1", [
             {"creature_id": "gg_001", "target": "p2"},
         ])
         assert "gg_001" in cm.attackers
+        assert cm.rejected_attackers == []
         # Attacker should be tapped (no vigilance)
         assert goblin.tapped is True
 
@@ -41,6 +43,71 @@ class TestDeclareAttackers:
         cm = CombatManager()
         cm.set_attackers(gs, "p1", [])
         assert cm.attackers == {}
+
+    def test_tapped_attacker_rejected(self):
+        gs = _make_gs()
+        cm = CombatManager()
+        goblin = Permanent(id="gg_001", card_def_id="goblin_guide",
+                           controller="p1", power=2, toughness=2,
+                           summoning_sick=False, tapped=True)
+        gs.battlefield["p1"].append(goblin)
+
+        cm.set_attackers(gs, "p1", [
+            {"creature_id": "gg_001", "target": "p2"},
+        ])
+        # Spec §11: attacking with a tapped creature is an ILLEGAL_ACTION —
+        # the rejection must be surfaced, not silently skipped.
+        assert "gg_001" not in cm.attackers
+        assert any(r["creature_id"] == "gg_001" and "tapped" in r["reason"]
+                   for r in cm.rejected_attackers)
+
+    def test_summoning_sick_attacker_rejected(self):
+        gs = _make_gs()
+        cm = CombatManager()
+        goblin = Permanent(id="gg_001", card_def_id="goblin_guide",
+                           controller="p1", power=2, toughness=2,
+                           summoning_sick=True)
+        gs.battlefield["p1"].append(goblin)
+
+        cm.set_attackers(gs, "p1", [
+            {"creature_id": "gg_001", "target": "p2"},
+        ])
+        # Spec §3: summoning-sick creatures MUST NOT attack (unless haste).
+        assert "gg_001" not in cm.attackers
+        assert any(r["creature_id"] == "gg_001" and "summoning" in r["reason"]
+                   for r in cm.rejected_attackers)
+
+    def test_defender_cannot_attack(self):
+        gs = _make_gs()
+        cm = CombatManager()
+        wall = Permanent(id="wall_001", card_def_id="wall_of_stone",
+                         controller="p1", power=0, toughness=8,
+                         summoning_sick=False,
+                         abilities=[{"type": "keyword", "name": "defender"}])
+        gs.battlefield["p1"].append(wall)
+
+        cm.set_attackers(gs, "p1", [
+            {"creature_id": "wall_001", "target": "p2"},
+        ])
+        assert "wall_001" not in cm.attackers
+        assert any(r["creature_id"] == "wall_001" and "defender" in r["reason"]
+                   for r in cm.rejected_attackers)
+
+    def test_vigilant_attacker_not_tapped(self):
+        gs = _make_gs()
+        cm = CombatManager()
+        angel = Permanent(id="serra_001", card_def_id="serra_angel",
+                          controller="p1", power=4, toughness=4,
+                          summoning_sick=False,
+                          abilities=[{"type": "keyword", "name": "vigilance"}])
+        gs.battlefield["p1"].append(angel)
+
+        changes = cm.set_attackers(gs, "p1", [
+            {"creature_id": "serra_001", "target": "p2"},
+        ])
+        assert "serra_001" in cm.attackers
+        assert angel.tapped is False
+        assert changes == []  # No TAP event for a vigilant attacker.
 
 
 class TestDeclareBlockers:

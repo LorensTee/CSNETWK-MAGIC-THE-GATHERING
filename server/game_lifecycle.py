@@ -359,6 +359,21 @@ class GameLifecycle:
             if action and action.get("type") == "DECLARE_ATTACKERS":
                 attackers = action.get("attackers", [])
                 self.combat_mgr.set_attackers(gs, ap_id, attackers)
+
+                # RFC §11: every illegal declaration MUST be answered with
+                # ERROR ILLEGAL_ACTION (e.g. attacking with a tapped or
+                # summoning-sick creature) instead of a silent drop.
+                if self.combat_mgr.rejected_attackers:
+                    reasons = "; ".join(
+                        f"{r['creature_id']}: {r['reason']}"
+                        for r in self.combat_mgr.rejected_attackers
+                    )
+                    await self.send_error(
+                        self._connection_for(ap_id),
+                        "ILLEGAL_ACTION",
+                        f"Invalid attackers: {reasons}.",
+                        action,
+                    )
                 
             await self._broadcast_game_state(gs) 
 
