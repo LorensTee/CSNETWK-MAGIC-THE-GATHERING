@@ -228,13 +228,41 @@ class GameLifecycle:
         gs.phase = "GAME_SETUP"
 
         # Validate both deck lists using stored lists.
+        timeout_s = self.priority_mgr.config.time_limit_ms / 1000.0
         for pid in gs.player_ids:
-            deck = self._deck_lists.get(pid, [])
-            ok, msg = self.card_loader.is_legal_deck(deck)
-            if not ok:
-                await self._end_game(gs, "ILLEGAL_DECK", pid,
-                                     self._opponent(pid))
-                return
+            while True:
+                deck = self._deck_lists.get(pid, [])
+                ok, msg = self.card_loader.is_legal_deck(deck)
+                if ok:
+                    break
+                # RFC §11: an invalid deck is answered with ERROR ILLEGAL_DECK
+                # (GAME_OVER reasons are WIN/LOSS/CONCEDE/DISCONNECT only).
+                await self.send_error(
+                    self._connection_for(pid), "ILLEGAL_DECK", msg,
+                    {"type": "PLAYER_READY"},
+                )
+                # Wait for a corrected deck (re-ready handled in
+                # handle_player_ready); a disconnect ends the game.
+                try:
+                    response = await asyncio.wait_for(
+                        self.wait_for_pdu(pid, timeout_s), timeout=timeout_s
+                    )
+                except (asyncio.TimeoutError, ConnectionError, ConnectionLost):
+                    await self._end_game(
+                        gs, "DISCONNECT", self._opponent(pid) or "", pid
+                    )
+                    return
+                if response and response.get("type") == "PLAYER_READY":
+                    deck = response.get("deck_list", [])
+                    ok2, msg2 = self.card_loader.is_legal_deck(deck)
+                    if ok2:
+                        self._deck_lists[pid] = deck
+                    else:
+                        await self.send_error(
+                            self._connection_for(pid), "ILLEGAL_DECK", msg2,
+                            response,
+                        )
+                # Non-PLAYER_READY PDUs (e.g. PING) loop back to re-check.
 
         # Broadcast GAME_SETUP state (per program-states.md Step 4).
         for pid in gs.player_ids:
@@ -902,6 +930,19 @@ class GameLifecycle:
             # If this socket already has an ID assigned by the Reconnect Watcher, 
             # they are just rejoining. Silently ignore this amnesia packet.
             if conn.player_id is not None:
+                # GAME_SETUP re-ready: the player was told their deck is
+                # illegal (ERROR ILLEGAL_DECK) and is retrying with a
+                # corrected list (RFC §11).
+                if self.gs.phase == "GAME_SETUP":
+                    deck_list = pdu.get("deck_list", [])
+                    ok, msg = self.card_loader.is_legal_deck(deck_list)
+                    if ok:
+                        self._deck_lists[conn.player_id] = deck_list
+                        print(f"[LOBBY] {conn.player_id} re-readied with a corrected deck.")
+                    else:
+                        await self.send_error(
+                            conn, "ILLEGAL_DECK", msg, pdu,
+                        )
                 return
                 
             # Otherwise, it's a completely new connection trying to join mid-game
