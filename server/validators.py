@@ -76,6 +76,105 @@ def _player_controls_permanent(
 # Validators
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Card-specific target constraints (override the generic heuristics in
+# validate_cast_spell).  Keys are CardDef.card_id_base values.
+#
+#   zone      — where the target must live: 'battlefield' (default),
+#               'graveyard', or 'spell' (on the stack).
+#   types     — required substrings of the target card's card_type.
+#   not_types — forbidden substrings of the target card's card_type.
+#   not_color — forbidden colors (single-letter codes from the CSV).
+_CARD_TARGET_RULES: dict[str, dict] = {
+    "naturalize": {"types": ("artifact", "enchantment")},
+    "terror": {"types": ("creature",), "not_color": ("B",),
+               "not_types": ("artifact",)},
+    "doom_blade": {"types": ("creature",), "not_color": ("B",)},
+    "negate": {"zone": "spell", "not_types": ("creature",)},
+    "raise_dead": {"zone": "graveyard", "types": ("creature",)},
+    "gravedigger": {"zone": "graveyard", "types": ("creature",)},
+}
+
+
+def _find_perm_anywhere(state: GameState, permanent_id: str):
+    """Locate a permanent by instance id on any battlefield."""
+    for perms in state.battlefield.values():
+        for perm in perms:
+            if perm.id == permanent_id:
+                return perm
+    return None
+
+
+def _strip_instance_suffix(card_id: str) -> str:
+    """Strip a numeric instance suffix (e.g. ``'grizzly_bears_001'`` →
+    ``'grizzly_bears'``).  Multi-word base ids keep their underscores.
+    """
+    if "_" in card_id:
+        parts = card_id.rsplit("_", 1)
+        if parts[1].isdigit():
+            return parts[0]
+    return card_id
+
+
+def _check_specific_targets(
+    state: GameState,
+    rule: dict,
+    targets: list[str],
+    loader: CardLoader,
+) -> ValidationResult:
+    """Enforce card-specific target constraints (type / colour / zone)."""
+    zone = rule.get("zone", "battlefield")
+    for tgt in targets:
+        card = None
+        if zone == "battlefield":
+            perm = _find_perm_anywhere(state, tgt)
+            if perm is None:
+                return False, "ILLEGAL_TARGET", (
+                    f"'{tgt}' is not a valid permanent target."
+                )
+            if loader is not None:
+                card = loader.get_card(getattr(perm, "card_def_id", ""))
+        elif zone == "graveyard":
+            in_gy = any(tgt in gy for gy in state.graveyards.values())
+            if not in_gy:
+                return False, "ILLEGAL_TARGET", (
+                    f"'{tgt}' is not in a graveyard."
+                )
+            if loader is not None:
+                card = loader.get_card(_strip_instance_suffix(tgt))
+        elif zone == "spell":
+            si = next((s for s in state.stack
+                       if getattr(s, "stack_item_id", "") == tgt), None)
+            if si is None:
+                return False, "ILLEGAL_TARGET", (
+                    f"'{tgt}' is not a spell on the stack."
+                )
+            if loader is not None:
+                card = loader.get_card(
+                    _strip_instance_suffix(getattr(si, "source", ""))
+                )
+
+        if card is not None:
+            ctype = (getattr(card, "card_type", "") or "").lower()
+            # Any-of semantics: e.g. Naturalize accepts artifact OR enchantment.
+            if rule.get("types") and not any(
+                req in ctype for req in rule["types"]
+            ):
+                return False, "ILLEGAL_TARGET", (
+                    f"'{tgt}' does not satisfy the target requirement "
+                    f"({' or '.join(rule['types'])})."
+                )
+            for ntype in rule.get("not_types", ()):
+                if ntype in ctype:
+                    return False, "ILLEGAL_TARGET", (
+                        f"'{tgt}' is not a valid target."
+                    )
+            color = getattr(card, "color", "") or ""
+            if color in rule.get("not_color", ()):
+                return False, "ILLEGAL_TARGET", (
+                    f"'{tgt}' is not a valid target (colour restriction)."
+                )
+    return True, None, ""
+
 
 def validate_cast_spell(
     state: GameState,
@@ -135,8 +234,18 @@ def validate_cast_spell(
         return False, "ILLEGAL_ACTION", (
             f"'{card_def.name}' does not require targets but got {targets}."
         )
-    # Validate target existence for specific card types.
-    if requires_target and targets:
+
+    base_id = getattr(card_def, "card_id_base", "") or card_id
+    rule = _CARD_TARGET_RULES.get(base_id)
+
+    # Card-specific target constraints (removal / counterspells / recursion)
+    # take precedence over the generic heuristics below.
+    if rule is not None:
+        ok, code, msg = _check_specific_targets(state, rule, targets, loader)
+        if not ok:
+            return False, code, msg
+    elif requires_target and targets:
+        # Generic existence checks.
         is_player_target = "target player" in effect
         is_creature_target = "target creature" in effect
         is_spell_target = "target spell" in effect
