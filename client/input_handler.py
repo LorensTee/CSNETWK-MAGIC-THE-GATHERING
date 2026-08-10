@@ -1,13 +1,3 @@
-"""
-client/input_handler.py — Player Input Handler (Module 03: Client App)
-
-Captures keyboard input from the player and translates commands into PDU
-dicts that are enqueued for sending to the server.
-
-All command parsing is non-blocking: ``sys.stdin.readline()`` runs in a
-thread-pool executor so the asyncio event loop is never blocked.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -36,23 +26,14 @@ if TYPE_CHECKING:
 
 
 class InputHandler:
-    """Parses player input and creates PDUs.
-
-    Parameters
-    ----------
-    client :
-        The ``GameClient`` whose *outgoing_queue*, *visible_state*, and
-        *config* are used.
-    """
-
     def __init__(self, client: GameClient) -> None:
         self.client = client
-        self._pending_bottom: list[str] | None = None  # cards to bottom from mulligan
+        self._pending_bottom: list[str] | None = None
         self.card_loader = CardLoader()
         self.card_loader.load()
 
     async def run(self) -> None:
-        """Main input loop — reads lines forever."""
+        # Keep reading commands until the client disconnects
         while self.client.state != "DISCONNECTED":
             line = await self._read_line()
             if line is None:
@@ -66,12 +47,7 @@ class InputHandler:
                 await self.client.outgoing_queue.put(pdu)
 
     async def _read_line(self) -> str | None:
-        """Read one line from stdin without blocking the event loop.
-
-        Uses ``loop.add_reader`` on the stdin fd (no background thread),
-        so a blocked read can never stall shutdown: cancelling the awaiting
-        task removes the reader and returns promptly.
-        """
+        #read one chunk of stdin without blocking the async loop
         loop = asyncio.get_event_loop()
         stdin = sys.stdin
         if stdin is None:
@@ -87,7 +63,7 @@ class InputHandler:
             try:
                 data = os.read(fd, 4096)
             except (BlockingIOError, InterruptedError):
-                return  # spurious wakeup — keep waiting
+                return
             except OSError:
                 data = b""
             if not future.done():
@@ -102,10 +78,6 @@ class InputHandler:
         if data is None:
             return None
         return data.decode(errors="replace")
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Command dispatch
-    # ═══════════════════════════════════════════════════════════════════════════
 
     COMMANDS: dict[str, str] = {
         "cast": "cast",
@@ -129,7 +101,6 @@ class InputHandler:
     }
 
     def _parse_and_execute(self, line: str) -> dict[str, Any] | None:
-        """Parse a command line and return a PDU dict (or None)."""
         parts = line.strip().split()
         if not parts:
             return None
@@ -137,7 +108,7 @@ class InputHandler:
         cmd = parts[0].lower()
         args = parts[1:]
 
-        # Handle multi-word commands.
+        # handle commands like "no attacks" and "no blocks"
         if cmd == "no":
             if args and args[0] == "attacks":
                 return self._cmd_no_attacks()
@@ -172,16 +143,12 @@ class InputHandler:
 
         return handler(args)
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Command handlers
-    # ═══════════════════════════════════════════════════════════════════════════
-
     def _get_seq_num(self) -> int:
-        """Return the seq_num for priority-bearing PDUs."""
+        #return the seq_num for priority PDUs
         return self.client._current_priority_seq or 0
 
     def _get_client_seq_num(self) -> int:
-        """Return the client's own seq_num for PING/PLAYER_READY."""
+        # return the clients own seq_num
         if self.client.connection:
             return self.client.connection.client_seq_num
         return 0
@@ -196,6 +163,7 @@ class InputHandler:
             print("Invalid index. Use: cast <N> [target]")
             return None
 
+        #error handling for invalid card index
         hand = self.client.visible_state.get("hand", [])
         if idx < 0 or idx >= len(hand):
             print(f"Invalid hand index {args[0]}. You have {len(hand)} cards.")
@@ -207,7 +175,7 @@ class InputHandler:
         if len(args) > 1:
             target_str = args[1]
             
-            # If the user typed a number (e.g., "2"), translate it!
+            #allow the player to target by battlefield index
             if target_str.isdigit():
                 t_idx = int(target_str) - 1
                 
@@ -216,26 +184,20 @@ class InputHandler:
                 my_id = vs.get("viewer_id")
                 opp_id = vs.get("opponent_id")
                 
-                # Gather all permanents in the same order your UI prints them.
-                # (usually opponent first, then yours)
                 all_perms = []
                 for pid in [opp_id, my_id]:
                     if pid:
                         all_perms.extend(vs.get("battlefield", {}).get(pid, []))
                 
                 if 0 <= t_idx < len(all_perms):
-                    # Grab the actual permanent ID string
                     target_perm = all_perms[t_idx]
-                    # Note: Adjust the key ("id", "permanent_id", etc.) based on what 
-                    # serialize_permanent() outputs in your codebase!
                     real_id = target_perm.get("id", target_perm.get("permanent_id", target_perm.get("card_id")))
                     targets.append(real_id)
                 else:
                     print(f"Invalid target index: {target_str}")
                     return None
             else:
-                # If they didn't type a number, assume they typed the literal ID
-                # (e.g., "player_2" to hit the opponent's face with a Lightning Bolt)
+                #else treat value as the literal targetID
                 targets.append(target_str)
 
         card_def = self.card_loader.get_card(card_id)
@@ -252,6 +214,7 @@ class InputHandler:
             mana_payment=mana_payment,
         )
 
+    # use land card from hand
     def _cmd_land(self, args: list[str]) -> dict[str, Any] | None:
         if not args:
             print("Usage: land <N>")
@@ -269,9 +232,11 @@ class InputHandler:
 
         return create_play_land(seq_num=self._get_seq_num(), card_id=hand[idx])
 
+    # pass priority to the next player
     def _cmd_pass(self, args: list[str]) -> dict[str, Any] | None:
         return create_priority_pass(seq_num=self._get_seq_num())
 
+    # declare attackers and target opponent player
     def _cmd_attack(self, args: list[str]) -> dict[str, Any] | None:
         if len(args) < 2:
             print("Usage: attack <N> <target_player_id>")
@@ -296,6 +261,7 @@ class InputHandler:
             attackers=[{"creature_id": creature_id, "target": target}],
         )
 
+    # declare blockers to block attacks
     def _cmd_block(self, args: list[str]) -> dict[str, Any] | None:
         if len(args) < 2:
             print("Usage: block <N> <attacker_index>")
@@ -314,7 +280,7 @@ class InputHandler:
             print(f"Invalid blocker index {args[0]}.")
             return None
 
-        # Find attacker by index on opponent's side.
+        # find attacker by index in opponents battlefield
         opp = self._get_opponent()
         opp_perms = bf.get(opp, [])
         if attacker_idx < 0 or attacker_idx >= len(opp_perms):
@@ -328,6 +294,7 @@ class InputHandler:
             blockers=[{"creature_id": blocker_id, "blocking_id": attacker_id}],
         )
 
+    # keep state if player doesnt mulligan
     def _cmd_keep(self, args: list[str]) -> dict[str, Any] | None:
         cards_to_bottom: list[str] = []
         if self._pending_bottom is not None:
@@ -339,6 +306,7 @@ class InputHandler:
             cards_to_bottom=cards_to_bottom,
         )
 
+    # mulligan state
     def _cmd_mulligan(self, args: list[str]) -> dict[str, Any] | None:
         self._pending_bottom = None
         return create_mulligan_choice(
@@ -347,6 +315,7 @@ class InputHandler:
             cards_to_bottom=[],
         )
 
+    #bottom cards from hand to the bottom of the deck
     def _cmd_bottom(self, args: list[str]) -> dict[str, Any] | None:
         if not args:
             print("Usage: bottom <N1> [N2 ...]")
@@ -370,6 +339,7 @@ class InputHandler:
             player_id=self.client.config.player_id,
         )
 
+    #activate an ability of a permanent on the battlefield
     def _cmd_activate(self, args: list[str]) -> dict[str, Any] | None:
         if len(args) < 2:
             print("Usage: activate <N> <ability_index> [target]")
@@ -436,6 +406,7 @@ class InputHandler:
         if not args:
             print("Usage: discard <N1> [N2 ...]")
             return None
+        # discard cards from hand by index
         hand = self.client.visible_state.get("hand", [])
         indices: list[int] = []
         for a in args:
@@ -449,7 +420,7 @@ class InputHandler:
         return create_discard(seq_num=self._get_seq_num(), card_ids=card_ids)
 
     def _cmd_help(self, args: list[str]) -> None:
-        """Print help text (no PDU)."""
+        # Print help text without sending PDU
         state = self.client.state
         phase = self.client.visible_state.get("phase", state)
         print(f"\n--- Available commands ({phase}) ---")
@@ -457,16 +428,16 @@ class InputHandler:
         print("")
 
     def _cmd_state(self, args: list[str]) -> None:
-        """Dump raw visible_state (no PDU — debug only)."""
+        #dump raw visible state for debugging
         import json
         print(json.dumps(self.client.visible_state, indent=2))
 
     def _cmd_deck(self, args: list[str]) -> None:
-        """Print current deck list (no PDU — display only)."""
+        # print current deck list or set a new one
         deck = self.client.deck_list
         if not deck:
             if args:
-                # Accept card IDs from command.
+                #accept card IDs from command line and set as deck
                 self.client.deck_list = args
                 deck = args
                 print(f"Deck set to {len(deck)} cards.")
@@ -478,7 +449,7 @@ class InputHandler:
             print(f"  {c}")
 
     def _cmd_ready(self, args: list[str]) -> dict[str, Any] | None:
-        """Send PLAYER_READY."""
+        #send PLAYER_READY message when the deck is ready
         deck = self.client.deck_list
         if not deck:
             print("No deck configured. Use 'deck <card1> <card2> ...' first.")
@@ -496,25 +467,22 @@ class InputHandler:
         )
 
     def _cmd_no_attacks(self) -> dict[str, Any] | None:
-        """Declare no attackers."""
+        #declare no attackers
         return create_declare_attackers(
             seq_num=self._get_seq_num(),
             attackers=[],
         )
 
     def _cmd_no_blocks(self) -> dict[str, Any] | None:
-        """Declare no blockers."""
+        #declare no blockers
         return create_declare_blockers(
             seq_num=self._get_seq_num(),
             blockers=[],
         )
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # Helpers
-    # ═══════════════════════════════════════════════════════════════════════════
-
     def _get_opponent(self) -> str:
-        """Return the opponent's player ID from visible state."""
+        #return the opponent's player ID from visible state
         pid = self.client.config.player_id
         for p in self.client.visible_state.get("life_totals", {}):
             if p != pid:
@@ -523,7 +491,7 @@ class InputHandler:
 
     @staticmethod
     def _phase_help_text(state: str, phase: str) -> str:
-        """Return help text for the current phase."""
+        # Return the help text for the current client state
         if state == "LOBBY":
             return (
                 "  deck <card_id1> <card_id2> ...  — set your deck list\n"

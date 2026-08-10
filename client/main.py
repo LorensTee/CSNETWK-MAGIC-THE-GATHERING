@@ -1,9 +1,3 @@
-"""
-client/main.py — Client Entry Point (Module 03: Client App)
-
-Parses command-line arguments and starts the ``GameClient`` event loop.
-"""
-
 import argparse
 import asyncio
 

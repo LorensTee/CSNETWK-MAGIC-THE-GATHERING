@@ -1,10 +1,3 @@
-"""
-client/dispatcher.py — Client PDU Dispatcher (Module 03: Client App)
-
-Routes incoming server-to-client PDUs to the appropriate handler method.
-Each handler updates the client's *visible_state* and triggers a re-render.
-"""
-
 from __future__ import annotations
 
 import json
@@ -17,22 +10,15 @@ if TYPE_CHECKING:
 
 
 class ClientDispatcher:
-    """Dispatches incoming S→C PDUs to handler methods.
-
-    Parameters
-    ----------
-    client :
-        The ``GameClient`` whose state is updated.
-    """
 
     def __init__(self, client: GameClient) -> None:
+        #reference to GameClient
         self.client = client
 
     async def dispatch(self, pdu: dict[str, Any]) -> None:
-        """Route a parsed PDU to the appropriate handler."""
         pdu_type = pdu.get("type", "")
 
-        handler = {
+        handler={
             "GAME_STATE_UPDATE": self._handle_game_state_update,
             "PHASE_TRANSITION": self._handle_phase_transition,
             "PRIORITY_GRANT": self._handle_priority_grant,
@@ -52,23 +38,17 @@ class ClientDispatcher:
 
         await handler(pdu)
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Handlers
-    # ═══════════════════════════════════════════════════════════════════════════
-
     async def _handle_game_state_update(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Replace visible state and update client lifecycle state."""
-
+        #replaces the visible game view with the latest server view and updates the client
         if "seq_num" in pdu:
             self.client._current_priority_seq = pdu["seq_num"]
-            
+
         state_obj = pdu.get("state", {})
         self.client.visible_state = state_obj
-        
+
         phase = state_obj.get("phase", "")
-        # Map server phase → client state.
         if phase == "LOBBY":
             self.client.state = "LOBBY"
         elif phase == "GAME_SETUP":
@@ -87,17 +67,16 @@ class ClientDispatcher:
 
         self._trigger_render()
 
+    # game advances to a new phase
     async def _handle_phase_transition(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Update visible state phase and turn."""
         vs = self.client.visible_state
         vs["phase"] = pdu.get("to_phase", vs.get("phase"))
         vs["from_phase"] = pdu.get("from_phase", vs.get("from_phase"))
         vs["turn"] = pdu.get("turn", vs.get("turn"))
 
         to_phase = pdu.get("to_phase", "")
-        # Update client state if this is a lifecycle transition.
         if to_phase in ("LOBBY", "GAME_SETUP", "MULLIGAN", "GAME_OVER"):
             self.client.state = to_phase
 
@@ -108,7 +87,7 @@ class ClientDispatcher:
     async def _handle_priority_grant(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Store the priority seq_num for echo in action PDUs."""
+        #  the player is granted prio
         seq = pdu.get("seq_num", 0)
         self.client._current_priority_seq = seq
 
@@ -124,7 +103,7 @@ class ClientDispatcher:
     async def _handle_stack_push(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Update local stack view."""
+        #view of spells or abilities currently in the stack
         stack = self.client.visible_state.setdefault("stack", [])
         stack.append({
             "stack_item_id": pdu.get("stack_item_id", ""),
@@ -139,7 +118,7 @@ class ClientDispatcher:
     async def _handle_stack_resolve(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Remove resolved item from local stack and print result."""
+        # a spell or ability resolves, remove it from the stack and display the effects
         sid = pdu.get("stack_item_id", "")
         result = pdu.get("result", "?")
         changes = pdu.get("state_changes", [])
@@ -171,7 +150,7 @@ class ClientDispatcher:
     async def _handle_trigger_order(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Prompt the player to order triggered abilities (RFC §8.11)."""
+        #asks player to decide order of trigger resolution
         trigger_ids = pdu.get("trigger_ids", [])
         print(f"\n[Trigger] Please order triggers: {trigger_ids}")
         print("Use: order-triggers <id1> <id2> ... (first resolves last)")
@@ -179,7 +158,7 @@ class ClientDispatcher:
     async def _handle_trigger_choice(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Prompt the player to accept/reject a triggered ability."""
+        #yes/no decision for triggered ability or target selection
         tid = pdu.get("trigger_id", "")
         summary = pdu.get("effect_summary", "")
         requires_target = pdu.get("requires_target", False)
@@ -189,12 +168,11 @@ class ClientDispatcher:
         print(f"  Accept? (yes/no)", end=" ")
         if requires_target:
             print(f"Targets: {legal_targets}")
-        # For now, auto-accept without target (simplified).
 
     async def _handle_combat_damage_result(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Update life totals and print damage summary."""
+        #server sends all damage dealt and any creatures that died so client updates total life and battlefield state
         life = pdu.get("life_totals", {})
         if life:
             self.client.visible_state["life_totals"] = life
@@ -218,7 +196,7 @@ class ClientDispatcher:
     async def _handle_game_over(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Handle game over — display result and set state."""
+        # game over; show winner, loser, and reason
         winner = pdu.get("winner_id", "?")
         loser = pdu.get("loser_id", "?")
         reason = pdu.get("reason", "?")
@@ -239,7 +217,7 @@ class ClientDispatcher:
     async def _handle_error(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Display an error from the server — do NOT crash."""
+        # server rejects an action
         code = pdu.get("code", "?")
         msg = pdu.get("message", "")
         rejected = pdu.get("rejected_action", {})
@@ -251,15 +229,11 @@ class ClientDispatcher:
     async def _handle_pong(
         self, pdu: dict[str, Any]
     ) -> None:
-        """Forward PONG to the heartbeat manager."""
+        # PING PONG - pong reply from the server
         if self.client.heartbeat is not None:
             self.client.heartbeat.on_pong(pdu)
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Internal
-    # ═══════════════════════════════════════════════════════════════════════════
-
     def _trigger_render(self) -> None:
-        """Wake up the render loop."""
+        #redraw to reflect the latest state
         if hasattr(self.client, "_render_event") and self.client._render_event is not None:
             self.client._render_event.set()
