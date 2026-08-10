@@ -1,9 +1,3 @@
-"""
-server/main.py — Server Entry Point (Module 02: Server Engine)
-
-Parses command-line arguments and starts the ``GameServer`` event loop.
-"""
-
 import argparse
 import asyncio
 
