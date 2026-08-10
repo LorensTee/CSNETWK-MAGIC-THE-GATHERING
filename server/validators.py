@@ -1,13 +1,5 @@
-"""
-server/validators.py — Action Validation (Module 02: Server Engine)
-
-Central validation functions for every player action.  Each function returns
-``(ok: bool, error_code: str | None, message: str)``.
-
-These are called **before** any game state mutation.  If *ok* is ``False``,
-the server sends an ``ERROR`` PDU with the returned *error_code* and
-*message*, and the game state is left unchanged.
-"""
+# server validators py action validation stuff
+# check actions before changing game state or send error
 
 from __future__ import annotations
 
@@ -20,40 +12,36 @@ if TYPE_CHECKING:
     from server.game_state import GameState
 
 
-# ── Type alias ───────────────────────────────────────────────────────────────
+# type alias for validation result
 
 ValidationResult = tuple[bool, str | None, str]
 """``(ok, error_code, message)`` where *ok* is ``True`` on success."""
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# General helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
+# helper stuff
 def _is_sorcery_speed(card_type: str, card_def: Any) -> bool:
     """Return ``True`` if the card can only be cast at sorcery speed."""
     if card_type == "Sorcery":
         return True
-    # Cards with no non-keyword abilities and no flash → sorcery speed.
+    # check if card is sorcery
     return False
 
-
+# check if main phase
 def _is_main_phase(phase: str) -> bool:
     """Return ``True`` if *phase* is a main phase."""
     return phase in ("PRECOMBAT_MAIN", "POSTCOMBAT_MAIN")
 
-
+# check if its an instant
 def _is_instant_speed(card_type: str) -> bool:
     """Return ``True`` if the card type can be cast at instant speed."""
     return card_type in ("Instant",) or card_type == "Instant"
 
-
+# see if player actually has the card
 def _player_owns_card(state: GameState, player: str, card_id: str) -> bool:
     """Return ``True`` if *card_id* is in *player*'s hand."""
     return card_id in state.hands.get(player, [])
 
-
+# see if creature is on field and not tapped
 def _player_has_untapped_creature(
     state: GameState, player: str, creature_id: str
 ) -> bool:
@@ -64,7 +52,7 @@ def _player_has_untapped_creature(
             return not perm.tapped
     return False
 
-
+# see if player owns the thing
 def _player_controls_permanent(
     state: GameState, player: str, permanent_id: str
 ) -> bool:
@@ -72,18 +60,8 @@ def _player_controls_permanent(
     return any(p.id == permanent_id for p in state.battlefield.get(player, []))
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Validators
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Card-specific target constraints (override the generic heuristics in
-# validate_cast_spell).  Keys are CardDef.card_id_base values.
-#
-#   zone      — where the target must live: 'battlefield' (default),
-#               'graveyard', or 'spell' (on the stack).
-#   types     — required substrings of the target card's card_type.
-#   not_types — forbidden substrings of the target card's card_type.
-#   not_color — forbidden colors (single-letter codes from the CSV).
+# actual validation functions
+# target rules for specific cards so they dont break
 _CARD_TARGET_RULES: dict[str, dict] = {
     "naturalize": {"types": ("artifact", "enchantment")},
     "terror": {"types": ("creature",), "not_color": ("B",),
@@ -96,7 +74,7 @@ _CARD_TARGET_RULES: dict[str, dict] = {
 
 
 def _find_perm_anywhere(state: GameState, permanent_id: str):
-    """Locate a permanent by instance id on any battlefield."""
+    # look everywhere for the card
     for perms in state.battlefield.values():
         for perm in perms:
             if perm.id == permanent_id:
@@ -105,23 +83,21 @@ def _find_perm_anywhere(state: GameState, permanent_id: str):
 
 
 def _strip_instance_suffix(card_id: str) -> str:
-    """Strip a numeric instance suffix (e.g. ``'grizzly_bears_001'`` →
-    ``'grizzly_bears'``).  Multi-word base ids keep their underscores.
-    """
+    # remove numbers at the end of card id
     if "_" in card_id:
         parts = card_id.rsplit("_", 1)
         if parts[1].isdigit():
             return parts[0]
     return card_id
 
-
+# check if targets are valid
 def _check_specific_targets(
     state: GameState,
     rule: dict,
     targets: list[str],
     loader: CardLoader,
 ) -> ValidationResult:
-    """Enforce card-specific target constraints (type / colour / zone)."""
+    # make sure types and colors match
     zone = rule.get("zone", "battlefield")
     for tgt in targets:
         card = None
@@ -155,7 +131,7 @@ def _check_specific_targets(
 
         if card is not None:
             ctype = (getattr(card, "card_type", "") or "").lower()
-            # Any-of semantics: e.g. Naturalize accepts artifact OR enchantment.
+            # check type
             if rule.get("types") and not any(
                 req in ctype for req in rule["types"]
             ):
@@ -175,7 +151,7 @@ def _check_specific_targets(
                 )
     return True, None, ""
 
-
+# validate casting a spell
 def validate_cast_spell(
     state: GameState,
     player: str,
@@ -184,37 +160,28 @@ def validate_cast_spell(
     mana_payment: dict[str, int],
     card_loader: CardLoader | None = None,
 ) -> ValidationResult:
-    """Validate a ``CAST_SPELL`` action.
-
-    Checks:
-    * Card is in the player's hand.
-    * Card is a known legal card.
-    * Player can afford the mana cost (uses ``can_pay`` from ``server.mana``).
-    * Sorcery-speed cards are only cast during a main phase with an empty
-      stack.
-    * Instant-speed cards can be cast any time the player has priority.
-    """
+    # checks hand mana timing and targets
     from server.card_loader import CardLoader as _CardLoader
     from server.mana import can_pay
 
-    # 1. Card in hand.
+    # 1 check hand
     if not _player_owns_card(state, player, card_id):
         return False, "ILLEGAL_ACTION", f"Card '{card_id}' is not in your hand."
 
-    # 2. Resolve the CardDef using the injected (or a fresh) loader.
+    # 2 load card
     loader: CardLoader = card_loader or _CardLoader()
     card_def = loader.get_card(card_id)
     if card_def is None:
         return False, "ILLEGAL_ACTION", f"Unknown card '{card_id}'."
 
-    # 3. Timing check (sorcery vs. instant).
+    # 3 timing checks
     if _is_sorcery_speed(card_def.card_type, card_def):
         if not _is_main_phase(state.phase):
             return False, "WRONG_PHASE", "Sorceries can only be cast during a main phase."
         if len(state.stack) > 0:
             return False, "WRONG_PHASE", "Sorceries can only be cast with an empty stack."
 
-    # 4. Full mana validation (against the acting player's own pool).
+    # 4 check mana
     from server.mana import ManaPool
     pool = state.mana_pools.get(player, ManaPool.empty())
     if not can_pay(mana_payment, card_def.mana_cost, pool):
@@ -223,7 +190,7 @@ def validate_cast_spell(
             f"but your available pool is {pool}."
         )
 
-    # 5. Target validation based on card effect text.
+    # 5 target stuff
     effect = card_def.simplified_effect.lower()
     requires_target = "target" in effect
     if requires_target and not targets:
@@ -238,14 +205,13 @@ def validate_cast_spell(
     base_id = getattr(card_def, "card_id_base", "") or card_id
     rule = _CARD_TARGET_RULES.get(base_id)
 
-    # Card-specific target constraints (removal / counterspells / recursion)
-    # take precedence over the generic heuristics below.
+    # check card targets
     if rule is not None:
         ok, code, msg = _check_specific_targets(state, rule, targets, loader)
         if not ok:
             return False, code, msg
     elif requires_target and targets:
-        # Generic existence checks.
+        # normal checks
         is_player_target = "target player" in effect
         is_creature_target = "target creature" in effect
         is_spell_target = "target spell" in effect
@@ -271,7 +237,7 @@ def validate_cast_spell(
                         f"'{tgt}' is not a valid spell target on the stack."
                     )
             elif is_any_target:
-                # Any target: can be a player or a permanent.
+                # check if anything
                 is_player = tgt in state.player_ids
                 is_perm = any(
                     tgt in [p.id for p in perms]
@@ -291,32 +257,25 @@ def validate_play_land(
     card_id: str,
     card_loader
 ) -> ValidationResult:
-    """Validate a ``PLAY_LAND`` action.
+    # validate land playing
+	# check active player phase land count stack and if u have the land
 
-    Checks:
-    * Card is a land type.
-    * Card is in the player's hand.
-    * Player hasn't already played a land this turn.
-    * Player is the active player.
-    * Current phase is a main phase.
-    * Stack is empty.
-    """
-    # 1. Player is AP.
+    # 1 check active player
     if state.active_player != player:
         return False, "NOT_YOUR_PRIORITY", "You are not the active player."
-    # 2. Main phase.
+    # 2 check main phase
     if not _is_main_phase(state.phase):
         return False, "WRONG_PHASE", "Lands can only be played during a main phase."
-    # 3. Land already played this turn.
+    # 3 check land count
     if state.land_played_this_turn:
         return False, "ILLEGAL_ACTION", "You have already played a land this turn."
-    # 4. Stack empty.
+    # 4 check stack
     if len(state.stack) > 0:
         return False, "ILLEGAL_ACTION", "Cannot play a land while the stack is non-empty."
-    # 5. Card is a land in hand.
+    # 5 check hand
     if not _player_owns_card(state, player, card_id):
         return False, "ILLEGAL_ACTION", f"Card '{card_id}' is not in your hand."
-    # 6. Card type is Land.
+    # 6 check if actual land
     base_id = card_id
     if "_" in card_id:
         parts = card_id.rsplit("_", 1)
@@ -341,14 +300,7 @@ def validate_activate_ability(
     targets: list[str],
     cost_payment: dict[str, Any],
 ) -> ValidationResult:
-    """Validate an ``ACTIVATE_ABILITY`` action.
-
-    Checks:
-    * Source permanent is on the battlefield under the player's control.
-    * Source is not summoning-sick (if the ability requires tapping).
-    * Ability index is valid.
-    * Costs are payable.
-    """
+    # validate ability activation
     if not _player_controls_permanent(state, player, source_id):
         return False, "ILLEGAL_ACTION", f"Permanent '{source_id}' is not under your control."
 
@@ -361,10 +313,10 @@ def validate_activate_ability(
     if perm is None:
         return False, "ILLEGAL_ACTION", f"Permanent '{source_id}' not found."
 
-    # Check summoning sickness for tap abilities.
+    # check if card is urs and not sick if tap needed
     requires_tap = cost_payment.get("tap", False)
     if requires_tap and perm.summoning_sick:
-        # Check for haste.
+        # check haste if sick
         from server.card_loader import CardLoader
         loader = CardLoader()
         card_def = loader.get_card(source_id)
@@ -379,15 +331,8 @@ def validate_attack(
     player: str,
     attackers: list[dict[str, str]],
 ) -> ValidationResult:
-    """Validate a ``DECLARE_ATTACKERS`` action.
-
-    Checks:
-    * Player is the active player.
-    * Phase is ``DECLARE_ATTACKERS``.
-    * Each creature is untapped, on the battlefield, controlled by *player*,
-      and does not have summoning sickness (unless it has haste).
-    * Each target is the opponent's player ID.
-    """
+    # validate attackers
+	# check active player phase untapped sick and target
     if state.active_player != player:
         return False, "NOT_YOUR_PRIORITY", "You are not the active player."
     if state.phase != "DECLARE_ATTACKERS":
@@ -399,7 +344,7 @@ def validate_attack(
         cid = entry.get("creature_id", "")
         target = entry.get("target", "")
 
-        # Creature exists and is controlled by player.
+        # creature check
         perm = None
         for p in state.battlefield.get(player, []):
             if p.id == cid:
@@ -408,11 +353,11 @@ def validate_attack(
         if perm is None:
             return False, "ILLEGAL_ACTION", f"'{cid}' is not on your battlefield."
 
-        # Creature is untapped.
+        # tap check
         if perm.tapped:
             return False, "ILLEGAL_ACTION", f"'{cid}' is tapped and cannot attack."
 
-        # Summoning sickness check.
+        # sick check
         if perm.summoning_sick:
             from server.card_loader import CardLoader
             loader = CardLoader()
@@ -420,7 +365,7 @@ def validate_attack(
             if card_def is None or "haste" not in str(card_def.abilities):
                 return False, "ILLEGAL_ACTION", f"'{cid}' has summoning sickness and cannot attack."
 
-        # Target is opponent.
+        # target check
         if target != opponent:
             return False, "ILLEGAL_TARGET", f"Invalid attack target '{target}'."
 
@@ -432,29 +377,22 @@ def validate_block(
     player: str,
     blockers: list[dict[str, str]],
 ) -> ValidationResult:
-    """Validate a ``DECLARE_BLOCKERS`` action.
+    # validate blockers
+	# check non active player phase untapped and 1 block per creature
 
-    Checks:
-    * Player is the non-active player.
-    * Phase is ``DECLARE_BLOCKERS``.
-    * Each blocker is an untapped creature controlled by *player*.
-    * Each `blocking_id` is a declared attacker.
-    * No blocker blocks more than one attacker.
-    * Multiple creatures may block the same attacker.
-    """
     if state.active_player == player:
         return False, "NOT_YOUR_PRIORITY", "You are not the defending player."
     if state.phase != "DECLARE_BLOCKERS":
         return False, "WRONG_PHASE", "Can only declare blockers in the Declare Blockers step."
 
-    # Track which blockers have been assigned (each can block only one).
+    # track assigned blockers
     assigned_blockers: set[str] = set()
 
     for entry in blockers:
         cid = entry.get("creature_id", "")
         blocking = entry.get("blocking_id", "")
 
-        # Blocker exists and is controlled by player.
+        # blocker check
         perm = None
         for p in state.battlefield.get(player, []):
             if p.id == cid:
@@ -463,10 +401,11 @@ def validate_block(
         if perm is None:
             return False, "ILLEGAL_ACTION", f"'{cid}' is not on your battlefield."
 
+		# tap check
         if perm.tapped:
             return False, "ILLEGAL_ACTION", f"'{cid}' is tapped and cannot block."
 
-        # Each creature can block at most one attacker.
+        # 1 block limit check
         if cid in assigned_blockers:
             return False, "ILLEGAL_ACTION", f"'{cid}' is already blocking a creature."
         assigned_blockers.add(cid)
@@ -482,12 +421,8 @@ def validate_mulligan(
     keep: bool,
     cards_to_bottom: list[str],
 ) -> ValidationResult:
-    """Validate a ``MULLIGAN_CHOICE`` action.
-
-    * If *keep* is ``False``, *cards_to_bottom* MUST be empty.
-    * If *keep* is ``True``, *cards_to_bottom* MUST contain exactly
-      ``mulligan_count`` cards.
-    """
+    # validate mulligan choice
+	# check keep or bottom rules based on mulligan count
     mull_count = state.mulligan_counts.get(player, 0)
 
     if not keep:
@@ -513,12 +448,8 @@ def validate_discard(
     player: str,
     card_ids: list[str],
 ) -> ValidationResult:
-    """Validate a ``DISCARD`` action (RFC §8.15 — Cleanup step).
-
-    * The player must have more than 7 cards in hand.
-    * Exactly ``hand_size - 7`` cards must be discarded.
-    * All cards must be in the player's hand.
-    """
+    # validate cleanup step discard
+	# check hand size and make sure discarded cards are in hand
     hand = state.hands.get(player, [])
     hand_size = len(hand)
 
@@ -543,11 +474,8 @@ def validate_deck(
     deck_list: list[str],
     card_loader: CardLoader,
 ) -> ValidationResult:
-    """Validate a ``PLAYER_READY`` deck list.
-
-    Wraps ``CardLoader.is_legal_deck`` with the RFC §6.2 rules:
-    1–50 cards, all from the legal set.
-    """
+    # validate player ready deck list
+	# check deck legal rules like 1-50 cards
     ok, msg = card_loader.is_legal_deck(deck_list)
     if not ok:
         return False, "ILLEGAL_DECK", msg
@@ -559,15 +487,16 @@ def validate_target(
     target_id: str,
     legal_targets: list[str],
 ) -> ValidationResult:
-    """Validate that *target_id* is in the *legal_targets* list."""
+    # validate target
+	# check if target in legal targets list
     if target_id not in legal_targets:
         return False, "ILLEGAL_TARGET", f"'{target_id}' is not a legal target."
     return True, None, ""
 
 
-# ── Internal helpers ─────────────────────────────────────────────────────────
+# Internal helpers 
 
-
+# get opponent id
 def _get_opponent(state: GameState, player: str) -> str | None:
     for pid in state.player_ids:
         if pid != player:
