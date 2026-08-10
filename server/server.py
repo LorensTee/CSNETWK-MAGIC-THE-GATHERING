@@ -1,11 +1,3 @@
-"""
-server/server.py — Game Server (Module 02: Server Engine)
-
-Top-level server orchestration.  Creates the listening socket, accepts
-exactly two client connections, wraps each in a ``ServerConnection``,
-connects the dispatcher, and hands off to ``GameLifecycle``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -20,30 +12,22 @@ from server.game_lifecycle import GameLifecycle
 
 
 class GameServer:
-    """The MTGNP game server.
-
-    Parameters
-    ----------
-    config :
-        Server configuration.
-    """
-
     def __init__(self, config: ServerConfig) -> None:
         self.config = config
 
-        # Load card data.
+        # load card data
         self.card_loader = CardLoader()
         self.card_loader.load()
 
-        # Active connections (max 2).
+        # max 2 active connections
         self._connections: list[ServerConnection] = []
 
-        # Queue for the accept loop.
+        # queue for the accept loop
         self._incoming: asyncio.Queue[ServerConnection] = asyncio.Queue()
         self._server_instance: asyncio.AbstractServer | None = None
 
+    #start server and run game sessions indefinitely
     async def run(self) -> None:
-        """Start the server and run game sessions indefinitely."""
         self._server_instance = await asyncio.start_server(
             self._on_client_connected,
             host=self.config.host,
@@ -56,22 +40,12 @@ class GameServer:
         async with self._server_instance:
             await self._game_loop()
 
+    #sends disconnect message to remaining clients and closes connections if exceeded timeout
     async def _watchdog_sweep(
         self,
         lifecycle: GameLifecycle,
         disconnect_times: dict,
     ) -> bool:
-        """One disconnect-timeout sweep pass.
-
-        If a closed connection has exceeded *disconnect_timeout_s*,
-        broadcast GAME_OVER(DISCONNECT) to the surviving player and
-        return ``True``.  Routing through ``lifecycle._end_game`` keeps
-        the GAME_OVER seq-numbered via ``send_pdu`` (RFC §10.2.22,
-        verbose-mode rubric prerequisite), resets the ready-state for the
-        next LOBBY, and signals the engine to unwind gracefully.  The
-        winner's socket is NOT closed — RFC §6.6 retains connections
-        after GAME_OVER for the next LOBBY.
-        """
         for i, c in enumerate(self._connections):
             if getattr(c, '_closed', False):
                 if c not in disconnect_times:
@@ -88,25 +62,16 @@ class GameServer:
                             c.player_id or "",
                         )
                     else:
-                        # Both connections are dead.  Still route through
-                        # _end_game (with an empty winner) so the
-                        # ready-state reset runs: a bare _game_over.set()
-                        # would leave stale players_ready/conn.player_id,
-                        # making the next LOBBY skip the READY wait and
-                        # then send to dead sockets.
                         await lifecycle._end_game(
                             lifecycle.gs, "DISCONNECT", "", c.player_id or "",
                         )
                     return True
         return False
 
+    #accept pairs of connections and run game sessions indefinitely
     async def _game_loop(self) -> None:
-        """Accept pairs of connections and run game sessions."""
         while True:
             self._connections.clear()
-            # Close any connections left queued from the previous session
-            # (the queue is replaced below — otherwise the queued sockets
-            # would leak until the process exits).
             while not self._incoming.empty():
                 try:
                     leaked = self._incoming.get_nowait()
@@ -115,7 +80,7 @@ class GameServer:
                     break
             self._incoming = asyncio.Queue()
 
-            # Accept exactly two connections.
+            # accept exactly two connections
             while len(self._connections) < 2:
                 conn = await self._incoming.get()
                 self._connections.append(conn)
@@ -123,28 +88,28 @@ class GameServer:
                 peername = conn.writer.get_extra_info("peername")
                 print(f"Player {len(self._connections)} connected ({peername})")
 
-            # Create lifecycle and wire dispatcher.
+            # create lifecycle and wire dispatcher
             lifecycle = GameLifecycle(self.config, self.card_loader, self._connections)
             for conn in self._connections:
                 conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
 
             async def connection_manager():
                 disconnect_times = {}
-                print("[WATCHDOG] ONLINE AND SWEEPING!") # If you don't see this, the task is dead.
+                print("[WATCHDOG] ONLINE AND SWEEPING!") # if u dont see this the task is dead
                 
                 while not lifecycle._game_over.is_set():
                     try:
-                        # 1. Sweep for timeouts
+                        # sweep for timeouts
                         if await self._watchdog_sweep(lifecycle, disconnect_times):
                             return
                         
-                        # 2. Process incoming connections
+                        # process incoming connections
                         try:
                             new_conn = await asyncio.wait_for(self._incoming.get(), timeout=1.0)
                         except (asyncio.TimeoutError, TimeoutError):
-                            continue # Nothing came in, go loop again
+                            continue # nothing came in loop again
                             
-                        # Find the empty seat
+                        # find the empty seat
                         for i, old_conn in enumerate(self._connections):
                             if getattr(old_conn, '_closed', False):
                                 if old_conn in disconnect_times and (time.time() - disconnect_times[old_conn] > self.config.disconnect_timeout_s):
@@ -154,9 +119,6 @@ class GameServer:
                                 print(f"[RECONNECT] {old_conn.player_id} rejoined the game!")
                                 new_conn.player_id = old_conn.player_id
                                 new_conn.seq_num = old_conn.seq_num
-                                # Carry the priority token too, so the
-                                # dispatcher's stale pre-filter stays
-                                # armed for the reconnected player.
                                 new_conn.grant_token = old_conn.grant_token
                                 new_conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
                                 
@@ -172,35 +134,30 @@ class GameServer:
                         print(f"[WATCHDOG CRASHED]: {e}")
                         await asyncio.sleep(1)
 
-            # 1. START THE WATCHDOG FIRST
+            # first start watchdog
             conn_manager_task = asyncio.create_task(connection_manager())
 
-            # 2. RUN THE GAME SECOND
+            # next run game
             await lifecycle.run()
 
-            # 3. CLEAN UP THIRD
+            #last cleanup
             conn_manager_task.cancel()
 
-            # Reset for next game.
+            # reset
             for conn in self._connections:
                 conn.seq_num = 0
                 conn.player_id = None
                 conn.grant_token = None
 
+    #accepts 2 tcp connections, any are refused
     async def _on_client_connected(
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
-        """Callback for each new TCP connection.
-
-        Accepts up to 2 connections; refuses extras.
-        """
-
         active_count = sum(1 for c in self._connections if not c._closed)
 
         if active_count >= 2:
-            # Already have two players — refuse.
             if self.config.verbose:
                 import sys
                 print(
@@ -211,12 +168,6 @@ class GameServer:
             writer.close()
             return
 
-        # Bound the pending queue: while the session waits for its two
-        # players (or a reconnect slot), every new TCP connection lands
-        # here.  Without a cap an attacker can exhaust fds/memory by
-        # opening connections in a loop (each sits queued until the
-        # session ends).  Two slots is enough: one reconnect candidate
-        # plus slack.
         if self._incoming.qsize() >= 2:
             if self.config.verbose:
                 print(
@@ -230,7 +181,7 @@ class GameServer:
 
         conn = ServerConnection(
             reader, writer,
-            on_pdu=None,  # Set by _game_loop after lifecycle is created.
+            on_pdu=None,
             verbose=self.config.verbose,
         )
         await self._incoming.put(conn)

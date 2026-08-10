@@ -1,6 +1,6 @@
 """
-server — MTGNP Game Server.
+server
 
 Implements the authoritative game engine: lifecycle FSM, turn/phase engine,
-priority, stack, combat, card effects, and player connection management.
+priority, stack, combat, card effects, and player connection management
 """

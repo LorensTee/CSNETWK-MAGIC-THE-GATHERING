@@ -1,14 +1,3 @@
-"""
-server/card_loader.py — Card Data Loading (Module 02: Server Engine)
-
-Loads and validates the static card catalog from CSV files.  The server uses
-this module to:
-
-* Parse ``data/mtgnp_master_card_list.csv`` into ``CardDef`` objects.
-* Build a set of all legal instance IDs from ``data/mtgnp_card_instances.csv``.
-* Validate player deck lists against the legal card set.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -18,86 +7,36 @@ from typing import Any
 
 
 @dataclass
-class CardDef:
-    """Definition of a single unique card type.
-
-    All 58 card types in the fixed set produce one ``CardDef`` each.
-    """
+class CardDef: #definition of a single card type
 
     card_id_base: str
-    """Base identifier without the copy suffix, e.g. ``'lightning_bolt'``."""
-
     name: str
-    """Human-readable name, e.g. ``'Lightning Bolt'``."""
-
     card_type: str
-    """Card type string: ``'Land'``, ``'Creature'``, ``'Instant'``,
-    ``'Sorcery'``, ``'Enchantment'``, ``'Artifact'``, ``'Artifact Creature'``."""
-
     subtype: str
-    """Subtype string or empty string."""
-
     color: str
-    """Colour: ``'W'``, ``'U'``, ``'B'``, ``'R'``, ``'G'``, or ``'C'``
-    (colourless)."""
-
     cmc: int
-    """Converted mana cost."""
-
     mana_cost: dict[str, int]
-    """Colour pip cost as ``{colour: pips}``, e.g. ``{'R': 1, 'X': 1}``.
-    Generic mana is stored under key ``'X'``."""
-
     power: int | None
-    """Power (non-``None`` only for creatures)."""
-
     toughness: int | None
-    """Toughness (non-``None`` only for creatures)."""
-
     copies_in_set: int
-    """How many copies of this card exist in the fixed set (usually 4 or 20)."""
-
     simplified_effect: str
-    """Human-readable effect text from the CSV."""
-
     abilities: list[dict[str, Any]] = field(default_factory=list)
-    """Parsed ability descriptors for game logic (populated during load)."""
 
-
+#loads and validates the card catalog
 class CardLoader:
-    """Loads and validates the fixed MTGNP card catalog.
-
-    Usage::
-
-        loader = CardLoader()
-        loader.load("data/mtgnp_master_card_list.csv", "data/mtgnp_card_instances.csv")
-        ok, msg = loader.is_legal_deck(["lightning_bolt_001", "mountain_001", ...])
-    """
 
     def __init__(self) -> None:
-        # card_id_base → CardDef
         self.card_defs: dict[str, CardDef] = {}
-
-        # Set of all valid instance IDs (e.g. "lightning_bolt_001")
         self.instance_ids: set[str] = set()
-
-        # instance_id → card_id_base
         self.instance_to_base: dict[str, str] = {}
-
         self._loaded = False
 
+    #parse csv files to load card definitions and instances
     def load(
         self,
         master_path: str | None = None,
         instances_path: str | None = None,
     ) -> None:
-        """Parse the two CSV files and build internal indexes.
-
-        If *master_path* or *instances_path* is ``None``, defaults to
-        ``data/mtgnp_master_card_list.csv`` and
-        ``data/mtgnp_card_instances.csv`` relative to this file's location
-        (or the current working directory).
-        """
         base = os.path.dirname(os.path.abspath(__file__))
         data_dir = os.path.join(os.path.dirname(base), "data")
 
@@ -108,10 +47,9 @@ class CardLoader:
         self._load_instances(instances_path)
         self._loaded = True
 
+    # parse the master card list CSV into CardDef objects
     def _load_master(self, path: str) -> None:
-        """Parse the master card list CSV into *CardDef* objects."""
         with open(path, newline="", encoding="utf-8") as f:
-            # Skip the title row (row 1).
             next(f)
             reader = csv.DictReader(f)
 
@@ -152,10 +90,9 @@ class CardLoader:
                 )
                 self.card_defs[card_id] = card_def
 
+    #parse card instances CSV to build the legal card set and map instance IDs to base IDs
     def _load_instances(self, path: str) -> None:
-        """Parse the card instances CSV to build the legal-ID set."""
         with open(path, newline="", encoding="utf-8") as f:
-            # Skip the title row (row 1).
             next(f)
             reader = csv.DictReader(f)
 
@@ -165,21 +102,11 @@ class CardLoader:
                     continue
                 self.instance_ids.add(instance_id)
 
-                # Derive the base ID by stripping the _NNN suffix.
-                # e.g. "lightning_bolt_001" → "lightning_bolt"
                 base_id = instance_id.rsplit("_", 1)[0] if "_" in instance_id else instance_id
-                # Handle double-underscore cases like mtgnp_master_card_list → ...
-                # Actually, the pattern is always "<base>_###" — the base itself
-                # uses underscores.  So "goblin_guide_001" → rsplit gives "goblin_guide".
                 self.instance_to_base[instance_id] = base_id
 
+    #checks if deck is legal according to the card set and deck size rules
     def is_legal_deck(self, deck_list: list[str]) -> tuple[bool, str]:
-        """Validate a deck list against the legal card set.
-
-        Returns
-        -------
-        ``(True, "")`` on success, or ``(False, "error description")`` on failure.
-        """
         if not deck_list:
             return False, "Deck is empty."
         if len(deck_list) > 50:
@@ -191,31 +118,22 @@ class CardLoader:
 
         return True, ""
 
+    #lookup by ID
     def get_card(self, card_id: str) -> CardDef | None:
-        """Look up a ``CardDef`` by instance ID or base ID.
-
-        If *card_id* is an instance ID (e.g. ``'lightning_bolt_001'``), the
-        base ID is extracted automatically.  Returns ``None`` if not found.
-        """
         if card_id in self.card_defs:
             return self.card_defs[card_id]
-        # Try as instance ID.
         base = self.instance_to_base.get(card_id)
         if base and base in self.card_defs:
             return self.card_defs[base]
         return None
 
+    #return base card id to instance id
     def instance_to_base_id(self, instance_id: str) -> str | None:
-        """Return the base card ID for an instance ID, or ``None``."""
         return self.instance_to_base.get(instance_id)
 
     @staticmethod
+    #parse ability keywords from a csv row
     def _parse_abilities(csv_row: dict[str, str]) -> list[dict[str, Any]]:
-        """Parse ability keywords from a CSV row.
-
-        Currently parses keyword abilities from the Simplified Effect column.
-        This is a stub that can be extended for full ability resolution.
-        """
         effect = csv_row.get("Simplified Effect", "").strip().lower()
         abilities: list[dict[str, Any]] = []
 
@@ -236,11 +154,8 @@ class CardLoader:
         if "protection from" in effect:
             abilities.append({"type": "keyword", "name": "protection"})
 
-        # Tap abilities
         if "tap:" in effect:
-
             produces = {}
-            # Count coloured/colourless mana symbols, e.g. "{c}{c}" → C:2.
             for symbol, color in (
                 ("{r}", "R"), ("{g}", "G"), ("{u}", "U"),
                 ("{w}", "W"), ("{b}", "B"), ("{c}", "C"),
@@ -249,7 +164,6 @@ class CardLoader:
                 if count:
                     produces[color] = count
 
-            # Fallback for plain-text effects without mana symbols.
             if not produces:
                 name = csv_row.get("Card Name", "").strip().lower()
                 if "add r" in effect or "add {r}" in effect or name == "mountain":
