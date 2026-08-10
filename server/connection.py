@@ -116,8 +116,8 @@ class ServerConnection:
                 self._closed = True
                 break
 
+    #close the connection
     async def close(self) -> None:
-        """Gracefully close the TCP connection."""
         self._closed = True
         try:
             self.writer.close()
