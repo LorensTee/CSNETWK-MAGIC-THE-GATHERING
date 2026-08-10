@@ -17,7 +17,7 @@ from typing import Any, Callable
 from server.game_state import GameState, Permanent
 from server.mana import ManaPool
 
-# ── Type alias for effect handlers ───────────────────────────────────────────
+# Type alias for effect handlers 
 
 # Signature: (gs, controller, targets, card_def_abilities, extra) -> state_changes
 EffectHandler = Callable[
@@ -25,25 +25,30 @@ EffectHandler = Callable[
     list[dict[str, Any]],
 ]
 
-# ── State-change helper factories ────────────────────────────────────────────
+# State-change helper factories 
 
 
+# damage
 def _damage(target: str, amount: int) -> dict[str, Any]:
     return {"change_type": "DAMAGE", "target": target, "amount": amount}
 
 
+# life gain
 def _life_gain(target: str, amount: int) -> dict[str, Any]:
     return {"change_type": "LIFE_GAIN", "target": target, "amount": amount}
 
 
+# life loss
 def _life_loss(target: str, amount: int) -> dict[str, Any]:
     return {"change_type": "LIFE_LOSS", "target": target, "amount": amount}
 
 
+# destroy
 def _destroy(target: str) -> dict[str, Any]:
     return {"change_type": "DESTROY", "target": target}
 
 
+# permanent enters
 def _permanent_enters(card_id: str, controller: str, tapped: bool = False) -> dict[str, Any]:
     return {
         "change_type": "PERMANENT_ENTERS",
@@ -53,10 +58,12 @@ def _permanent_enters(card_id: str, controller: str, tapped: bool = False) -> di
     }
 
 
+# counter
 def _counter(spell_stack_id: str) -> dict[str, Any]:
     return {"change_type": "COUNTER", "target": spell_stack_id}
 
 
+# pump
 def _pump(target_id: str, power: int, toughness: int, duration: str = "EOT") -> dict[str, Any]:
     return {
         "change_type": "PUMP",
@@ -67,31 +74,36 @@ def _pump(target_id: str, power: int, toughness: int, duration: str = "EOT") -> 
     }
 
 
+# return to hand
 def _return_to_hand(target: str) -> dict[str, Any]:
     return {"change_type": "RETURN_TO_HAND", "target": target}
 
 
+# exile
 def _exile(target: str) -> dict[str, Any]:
     return {"change_type": "EXILE", "target": target}
 
 
+# draw
 def _draw(player: str, count: int = 1) -> dict[str, Any]:
     return {"change_type": "DRAW", "player": player, "count": count}
 
 
+# discard card
 def _discard_card(player: str, card_ids: list[str]) -> dict[str, Any]:
     return {"change_type": "DISCARD", "player": player, "card_ids": card_ids}
 
 
+# add mana
 def _add_mana(controller: str, mana: dict[str, int]) -> dict[str, Any]:
     return {"change_type": "ADD_MANA", "player": controller, "mana": mana}
 
 
 
-# ── Effect Helper Functions ───────────────────────────────────────────
+# Effect Helper Functions 
 
+# apply damage
 def _apply_damage(gs: GameState, target: str, damage_amount: int) -> None:
-    """Helper to physically mutate the GameState for damage effects."""
     if target in gs.life_totals:
         gs.life_totals[target] -= damage_amount
     else:
@@ -101,8 +113,8 @@ def _apply_damage(gs: GameState, target: str, damage_amount: int) -> None:
                     perm.damage = getattr(perm, "damage", 0) + damage_amount
                     return
 
+# apply counter
 def _apply_counter(gs: GameState, target_stack_id: str) -> None:
-    """Helper to physically remove a countered spell from the stack."""
     for i, item in enumerate(gs.stack):
         if item.stack_item_id == target_stack_id:
             # Rip it off the stack! 
@@ -110,26 +122,26 @@ def _apply_counter(gs: GameState, target_stack_id: str) -> None:
             gs.stack.pop(i)
             break
 
+# apply bounce
 def _apply_bounce(gs: GameState, target_id: str) -> None:
-    """Helper to physically move a permanent from the battlefield to its owner's hand."""
     for player_id, perms in gs.battlefield.items():
         for i, perm in enumerate(perms):
             if perm.id == target_id:
-                # Rip it off the battlefield!
+                # rip it off the battlefield!
                 popped_perm = perms.pop(i)
                 
-                # Figure out the base card ID (e.g., stripping the unique "_004" suffix)
+                # figure out the base card ID (e.g., stripping the unique "_004" suffix)
                 # so the hand gets the raw card back.
                 card_id = getattr(popped_perm, "card_id", target_id.rsplit("_", 1)[0])
                 
-                # Append it back to the player's hand
+                # apend it back to the players hand
                 if player_id not in gs.hands:
                     gs.hands[player_id] = []
                 gs.hands[player_id].append(card_id)
                 return
 
+# apply draw
 def _apply_draw(gs: GameState, player_id: str, amount: int = 1) -> None:
-    """Helper to physically draw cards from the library to the hand."""
     for _ in range(amount):
         # Make sure they actually have a deck left!
         if player_id in gs.libraries and gs.libraries[player_id]:
@@ -141,8 +153,8 @@ def _apply_draw(gs: GameState, player_id: str, amount: int = 1) -> None:
                 gs.hands[player_id] = []
             gs.hands[player_id].append(drawn_card)
 
+# apply pump
 def _apply_pump(gs: GameState, target_id: str, power_bonus: int, toughness_bonus: int) -> None:
-    """Helper to add temporary stats to a creature."""
     for perms in gs.battlefield.values():
         for perm in perms:
             if perm.id == target_id:
@@ -150,8 +162,8 @@ def _apply_pump(gs: GameState, target_id: str, power_bonus: int, toughness_bonus
                 perm.temp_toughness = getattr(perm, "temp_toughness", 0) + toughness_bonus
                 return
 
+# apply destroy
 def _apply_destroy(gs: GameState, target_id: str) -> None:
-    """Helper to move a permanent from the battlefield to the graveyard."""
     for player_id, perms in gs.battlefield.items():
         for i, perm in enumerate(perms):
             if perm.id == target_id:
@@ -166,15 +178,15 @@ def _apply_destroy(gs: GameState, target_id: str) -> None:
                 gs.graveyards[player_id].append(card_id)
                 return
 
+# apply add mana
 def _apply_add_mana(gs: GameState, player_id: str, mana_dict: dict[str, int]) -> None:
-    """Helper to add floating mana directly to a player's pool."""
     pool = gs.mana_pools.setdefault(player_id, ManaPool.empty())
     for color, amount in mana_dict.items():
         current = getattr(pool, color, 0)
         setattr(pool, color, current + amount)
 
+# apply raise dead
 def _apply_raise_dead(gs: GameState, player_id: str, target_card_id: str) -> None:
-    """Helper to move a card from the graveyard to the hand."""
     gy = gs.graveyards.get(player_id, [])
     if target_card_id in gy:
         gy.remove(target_card_id)
@@ -182,13 +194,13 @@ def _apply_raise_dead(gs: GameState, player_id: str, target_card_id: str) -> Non
             gs.hands[player_id] = []
         gs.hands[player_id].append(target_card_id)
 
+# apply life change
 def _apply_life_change(gs: GameState, player_id: str, amount: int) -> None:
-    """Helper to modify a player's life total (positive for gain, negative for loss)."""
     if player_id in gs.life_totals:
         gs.life_totals[player_id] += amount
 
+# find permanent anywhere
 def _find_permanent_anywhere(gs: GameState, target_id: str) -> Permanent | None:
-    """Locate a permanent by instance id on any player's battlefield."""
     for perms in gs.battlefield.values():
         for perm in perms:
             if perm.id == target_id:
@@ -196,8 +208,8 @@ def _find_permanent_anywhere(gs: GameState, target_id: str) -> Permanent | None:
     return None
 
 
+# apply exile
 def _apply_exile(gs: GameState, target_id: str) -> None:
-    """Helper to move a permanent from the battlefield to the exile zone."""
     for player_id, perms in gs.battlefield.items():
         for i, perm in enumerate(perms):
             if perm.id == target_id:
@@ -213,8 +225,8 @@ def _apply_exile(gs: GameState, target_id: str) -> None:
                 gs.exile[player_id].append(card_id)
                 return
 
+# apply enchant
 def _apply_enchant(gs: GameState, target_id: str, aura_name: str) -> None:
-    """Helper to attach an aura flag to a permanent."""
     for perms in gs.battlefield.values():
         for perm in perms:
             if perm.id == target_id:
@@ -224,8 +236,8 @@ def _apply_enchant(gs: GameState, target_id: str, aura_name: str) -> None:
                 perm.auras.append(aura_name)
                 return
 
+# apply spawn permanent
 def _apply_spawn_permanent(gs, controller: str, card_id: str, card_loader: Any = None, enters_tapped: bool = False) -> None:
-    """Universal helper to construct and place a Permanent onto the battlefield."""
     power, toughness = 0, 0
     haste = False
     def_id = card_id
@@ -237,12 +249,12 @@ def _apply_spawn_permanent(gs, controller: str, card_id: str, card_loader: Any =
             power = cd.power if getattr(cd, 'power', None) is not None else 0
             toughness = cd.toughness if getattr(cd, 'toughness', None) is not None else 0
             def_id = getattr(cd, 'card_id_base', base_id)
-            
-            # Check if abilities list contains Haste
+          
+            # check if abilities list contains Haste
             if any(ab.get("name") == "haste" for ab in cd.abilities):
                 haste = True
 
-    # Construct the Permanent object
+    # construct the Permanent object
     from server.game_state import Permanent  # Adjust if Permanent is in a different file!
     perm = Permanent(
         id=card_id,
@@ -255,13 +267,13 @@ def _apply_spawn_permanent(gs, controller: str, card_id: str, card_loader: Any =
         abilities=list(cd.abilities) if cd else [],
     )
     
-    # Actually put it on the board!
+    # actually put it on the board
     gs.battlefield.setdefault(controller, []).append(perm)
     
 
-# ── Effect handler implementations ───────────────────────────────────────────
+# Effect handler implementations 
 
-
+# resolve goblin guide trigger
 def _effect_goblin_guide_trigger(
     gs: GameState,
     controller: str,
@@ -269,16 +281,12 @@ def _effect_goblin_guide_trigger(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Goblin Guide attack trigger (RFC §8.6.1): the defending player
-    reveals the top card of their library; if it is a land, they put it
-    into their hand, otherwise it goes to the graveyard."""
     opponent = next((pid for pid in gs.player_ids if pid != controller), None)
     if opponent is None:
         return []
     lib = gs.libraries.get(opponent, [])
     if not lib:
         return [{"change_type": "REVEAL", "player": opponent, "card_id": None}]
-
     revealed = lib.pop(0)
     changes = [
         {"change_type": "REVEAL", "player": opponent, "card_id": revealed},
@@ -300,6 +308,7 @@ def _effect_goblin_guide_trigger(
     return changes
 
 
+# resolve monastery swiftspear trigger
 def _effect_monastery_swiftspear_trigger(
     gs: GameState,
     controller: str,
@@ -307,14 +316,13 @@ def _effect_monastery_swiftspear_trigger(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Monastery Swiftspear prowess trigger (RFC §8.6.1): +1/+1 until end
-    of turn after its controller casts a noncreature spell."""
     source = extra.get("source_permanent") or extra.get("card_id", "")
     _apply_pump(gs, source, 1, 1)
     return [{"change_type": "PUMP", "target": source, "power": 1,
              "toughness": 1}]
 
 
+# resolve lightning bolt
 def _effect_lightning_bolt(
     gs: GameState,
     controller: str,
@@ -322,13 +330,13 @@ def _effect_lightning_bolt(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Lightning Bolt deals 3 damage to any target."""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
+# resolve shock
 def _effect_shock(
     gs: GameState,
     controller: str,
@@ -336,12 +344,12 @@ def _effect_shock(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Shock deals 2 damage to any target."""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 2)
     return [_damage(targets[0], 2)]
 
+# resolve lava spike
 def _effect_lava_spike(
     gs: GameState,
     controller: str,
@@ -349,13 +357,13 @@ def _effect_lava_spike(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Lava Spike deals 3 damage to target player."""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
+# resolve flame slash
 def _effect_flame_slash(
     gs: GameState,
     controller: str,
@@ -363,13 +371,13 @@ def _effect_flame_slash(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Flame Slash deals 4 damage to target creature."""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 4)
     return [_damage(targets[0], 4)]
 
 
+# resolve searing spear
 def _effect_searing_spear(
     gs: GameState,
     controller: str,
@@ -377,13 +385,13 @@ def _effect_searing_spear(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Searing Spear deals 3 damage to any target."""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
+# resolve skullcrack
 def _effect_skullcrack(
     gs: GameState,
     controller: str,
@@ -391,14 +399,13 @@ def _effect_skullcrack(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Skullcrack deals 3 damage to any target.  (Life gain prevention
-    is tracked as a state flag; for MTGNP 1.0 we just deal damage.)"""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
+# resolve rift bolt
 def _effect_rift_bolt(
     gs: GameState,
     controller: str,
@@ -406,14 +413,13 @@ def _effect_rift_bolt(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Rift Bolt deals 3 damage to any target.  (Suspend is not implemented
-    in MTGNP 1.0, so this resolves like a sorcery.)"""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
 
+# resolve incinerate
 def _effect_incinerate(
     gs: GameState,
     controller: str,
@@ -421,14 +427,12 @@ def _effect_incinerate(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Incinerate deals 3 damage to any target.  (Regeneration prevention
-    is not tracked separately in MTGNP 1.0.)"""
     if not targets:
         return []
     _apply_damage(gs, targets[0], 3)
     return [_damage(targets[0], 3)]
 
-
+# resolve counterspell
 def _effect_counterspell(
     gs: GameState,
     controller: str,
@@ -436,13 +440,13 @@ def _effect_counterspell(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Counter target spell."""
     if not targets:
         return []
     _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
+# resolve cancel
 def _effect_cancel(
     gs: GameState,
     controller: str,
@@ -450,13 +454,13 @@ def _effect_cancel(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Cancel — counter target spell."""
     if not targets:
         return []
     _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
+# resolve negate
 def _effect_negate(
     gs: GameState,
     controller: str,
@@ -464,13 +468,13 @@ def _effect_negate(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Negate — counter target noncreature spell."""
     if not targets:
         return []
     _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
+# resolve mana leak
 def _effect_mana_leak(
     gs: GameState,
     controller: str,
@@ -478,14 +482,13 @@ def _effect_mana_leak(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Mana Leak — counter target spell unless its controller pays {3}.
-    For MTGNP 1.0, the counter always resolves (simplified)."""
     if not targets:
         return []
     _apply_counter(gs, targets[0])
     return [_counter(targets[0])]
 
 
+# resolve unsummon
 def _effect_unsummon(
     gs: GameState,
     controller: str,
@@ -493,13 +496,13 @@ def _effect_unsummon(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Return target creature to its owner's hand."""
     if not targets:
         return []
     _apply_bounce(gs, targets[0])
     return [_return_to_hand(targets[0])]
 
 
+# resolve ponder
 def _effect_ponder(
     gs: GameState,
     controller: str,
@@ -507,11 +510,11 @@ def _effect_ponder(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Ponder — look at top 3, shuffle (optional), draw.  Simplified: draw 1."""
     _apply_draw(gs, controller, 1)
     return [_draw(controller, 1)]
 
 
+# resolve giant growth
 def _effect_giant_growth(
     gs: GameState,
     controller: str,
@@ -519,13 +522,13 @@ def _effect_giant_growth(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Giant Growth — target creature gets +3/+3 until end of turn."""
     if not targets:
         return []
     _apply_pump(gs, targets[0], 3, 3)
     return [_pump(targets[0], 3, 3)]
 
 
+# resolve rampant growth
 def _effect_rampant_growth(
     gs: GameState,
     controller: str,
@@ -533,23 +536,22 @@ def _effect_rampant_growth(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Rampant Growth — search for a basic land, put it onto battlefield tapped.
-    Picks the first basic land found in the controller's library."""
     lib = gs.libraries.get(controller, [])
     for card_id in lib:
         card_lower = card_id.lower()
         if any(basic in card_lower for basic in ("plains_", "island_", "swamp_", "mountain_", "forest_")):
             lib.remove(card_id)
-            # Pass enters_tapped=True to our new helper!
+            # pass enters_tapped=True to our new helpr
             _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"), enters_tapped=True)
             return [_permanent_enters(card_id, controller, tapped=True)]
             
-    # Fallback if no basic found
+    # fallback if no basic found
     fallback_id = "forest_001"
     _apply_spawn_permanent(gs, controller, fallback_id, extra.get("card_loader"), enters_tapped=True)
     return [_permanent_enters(fallback_id, controller, tapped=True)]
 
 
+# resolve naturalize
 def _effect_naturalize(
     gs: GameState,
     controller: str,
@@ -557,13 +559,13 @@ def _effect_naturalize(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Destroy target artifact or enchantment."""
     if not targets:
         return []
     _apply_destroy(gs, targets[0])
     return [_destroy(targets[0])]
 
 
+# resolve vines of vastwood
 def _effect_vines_of_vastwood(
     gs: GameState,
     controller: str,
@@ -571,13 +573,13 @@ def _effect_vines_of_vastwood(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Vines of Vastwood — target +4/+4 if kicked. Simplified: always kick."""
     if not targets:
         return []
     _apply_pump(gs, targets[0], 4, 4)
     return [_pump(targets[0], 4, 4)]
 
 
+# resolve dark ritual
 def _effect_dark_ritual(
     gs: GameState,
     controller: str,
@@ -585,11 +587,11 @@ def _effect_dark_ritual(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Add {B}{B}{B}."""
     _apply_add_mana(gs, controller, {"B": 3})
     return [_add_mana(controller, {"B": 3})]
 
 
+# resolve terror
 def _effect_terror(
     gs: GameState,
     controller: str,
@@ -597,13 +599,13 @@ def _effect_terror(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Destroy target nonartifact, nonblack creature."""
     if not targets:
         return []
     _apply_destroy(gs, targets[0])
     return [_destroy(targets[0])]
 
 
+# resolve doom blade
 def _effect_doom_blade(
     gs: GameState,
     controller: str,
@@ -611,13 +613,13 @@ def _effect_doom_blade(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Destroy target nonblack creature."""
     if not targets:
         return []
     _apply_destroy(gs, targets[0])
     return [_destroy(targets[0])]
 
 
+# resolve raise dead
 def _effect_raise_dead(
     gs: GameState,
     controller: str,
@@ -625,13 +627,13 @@ def _effect_raise_dead(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Return target creature card from graveyard to hand."""
     if not targets:
         return []
     _apply_raise_dead(gs, controller, targets[0])
     return [{"change_type": "RETURN_FROM_GRAVEYARD", "target": targets[0]}]
 
 
+# resolve mind rot
 def _effect_mind_rot(
     gs: GameState,
     controller: str,
@@ -639,14 +641,13 @@ def _effect_mind_rot(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Target player discards 2 cards."""
     if not targets:
         return []
     target = targets[0]
     count = extra.get("count", 2)
     hand = gs.hands.get(target, [])
     changes = []
-    # Discard `count` cards from the target's hand (last-drawn first).
+    # discard count cards from the targets hand, last-drawn first
     discarded = hand[-count:] if count > 0 else []
     for cid in discarded:
         hand.remove(cid)
@@ -657,6 +658,7 @@ def _effect_mind_rot(
     return changes
 
 
+# resolve gray merchant
 def _effect_gray_merchant(
     gs: GameState,
     controller: str,
@@ -664,7 +666,6 @@ def _effect_gray_merchant(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Gray Merchant of Asphodel — each opponent loses X life where X = devotion to black."""
     devotion = 0
     card_loader = extra.get("card_loader")
     for perm in gs.battlefield.get(controller, []):
@@ -675,10 +676,11 @@ def _effect_gray_merchant(
         else:
             devotion += 1
 
-    # The creature enters the battlefield (ETB).
+    # the creature enters the battlefield
     spawn_id = extra.get("card_id") or controller
     _apply_spawn_permanent(gs, controller, spawn_id, card_loader)
 
+# resolve mind rot
     opponent = next((pid for pid in gs.player_ids if pid != controller), None)
     if opponent is None:
         return []
@@ -687,7 +689,7 @@ def _effect_gray_merchant(
     _apply_life_change(gs, controller, devotion)
     return [_life_loss(opponent, devotion), _life_gain(controller, devotion)]
 
-
+# resolve gravedigger
 def _effect_gravedigger(
     gs: GameState,
     controller: str,
@@ -695,18 +697,17 @@ def _effect_gravedigger(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Return target creature card from your graveyard to your hand."""
     if not targets:
         return []
 
-    # The creature enters the battlefield (ETB).
+    # the creature enters the battlefield
     spawn_id = extra.get("card_id") or controller
     _apply_spawn_permanent(gs, controller, spawn_id, extra.get("card_loader"))
 
     _apply_raise_dead(gs, controller, targets[0])
     return [{"change_type": "RETURN_FROM_GRAVEYARD", "target": targets[0]}]
 
-
+# resolve healing salve
 def _effect_healing_salve(
     gs: GameState,
     controller: str,
@@ -714,13 +715,13 @@ def _effect_healing_salve(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Healing Salve — target player gains 3 life (Mode 1)."""
     if not targets:
         return []
     _apply_life_change(gs, targets[0], 3)
     return [_life_gain(targets[0], 3)]
 
 
+# resolve swords to plowshares
 def _effect_swords_to_plowshares(
     gs: GameState,
     controller: str,
@@ -728,10 +729,9 @@ def _effect_swords_to_plowshares(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Exile target creature. Its controller gains life equal to its power."""
     if not targets:
         return []
-    # Resolve controller/power BEFORE the exile removes the permanent.
+    # resolve controller/power BEFORE the exile removes the permanent
     perm = _find_permanent_anywhere(gs, targets[0])
     gain_player = perm.controller if perm is not None else controller
     amount = perm.power if perm is not None and perm.power is not None else 0
@@ -739,7 +739,7 @@ def _effect_swords_to_plowshares(
     _apply_life_change(gs, gain_player, amount)
     return [_exile(targets[0]), _life_gain(gain_player, amount)]
 
-
+# resolve path to exile
 def _effect_path_to_exile(
     gs: GameState,
     controller: str,
@@ -747,14 +747,12 @@ def _effect_path_to_exile(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Exile target creature. Its controller may search for a basic land.
-    Simplified: exile + controller gains a land."""
     if not targets:
         return []
     _apply_exile(gs, targets[0])
     return [_exile(targets[0])]
 
-
+# resolve pacifism
 def _effect_pacifism(
     gs: GameState,
     controller: str,
@@ -762,14 +760,12 @@ def _effect_pacifism(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Enchant creature. Enchanted creature can't attack or block.
-    For MTGNP 1.0, we flag the permanent."""
     if not targets:
         return []
     _apply_enchant(gs, targets[0], "pacifism")
     return [{"change_type": "ENCHANT", "target": targets[0], "aura": "pacifism"}]
 
-
+# resolve merfolk looter
 def _effect_merfolk_looter(
     gs: GameState,
     controller: str,
@@ -777,14 +773,12 @@ def _effect_merfolk_looter(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Merfolk Looter — activated ability handled elsewhere.
-    When it enters: just a creature."""
     card_id = extra.get("card_id", "black_knight_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve prodigal sorcerer
 def _effect_prodigal_sorcerer(
     gs: GameState,
     controller: str,
@@ -792,13 +786,11 @@ def _effect_prodigal_sorcerer(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Prodigal Sorcerer — tap ability handled elsewhere.
-    When it enters: just a creature."""
     card_id = extra.get("card_id", "prodigal_sorcerer_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve sol ring
 def _effect_sol_ring(
     gs: GameState,
     controller: str,
@@ -806,13 +798,11 @@ def _effect_sol_ring(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Sol Ring — tap ability produces {C}{C}.
-    When it enters: just a permanent."""
     card_id = extra.get("card_id", "sol_ring_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve millstone
 def _effect_millstone(
     gs: GameState,
     controller: str,
@@ -820,13 +810,11 @@ def _effect_millstone(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Millstone — activated ability: mill 2.
-    When it enters: just a permanent."""
     card_id = extra.get("card_id", "millstone_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve rod of ruin
 def _effect_rod_of_ruin(
     gs: GameState,
     controller: str,
@@ -834,13 +822,11 @@ def _effect_rod_of_ruin(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Rod of Ruin — activated ability: deal 1 damage.
-    When it enters: just a permanent."""
     card_id = extra.get("card_id", "rod_of_ruin_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve vanilla creature
 def _effect_vanilla_creature(
     gs,
     controller: str,
@@ -848,13 +834,12 @@ def _effect_vanilla_creature(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    
     card_id = extra.get("card_id", "")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve vanilla noncreature
 def _effect_vanilla_noncreature(
     gs: GameState,
     controller: str,
@@ -862,13 +847,12 @@ def _effect_vanilla_noncreature(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Handler for non-creature cards with no special effect (e.g. lands)."""
     card_id = extra.get("card_id", "")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve white knight
 def _effect_white_knight(
     gs: GameState,
     controller: str,
@@ -876,13 +860,12 @@ def _effect_white_knight(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """White Knight — First strike, Protection from black."""
     card_id = extra.get("card_id", "white_knight_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
     
     return [_permanent_enters(card_id, controller)]
 
-
+# resolve black knight
 def _effect_black_knight(
     gs: GameState,
     controller: str,
@@ -890,14 +873,12 @@ def _effect_black_knight(
     abilities: list[dict[str, Any]],
     extra: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Black Knight — First strike, Protection from white."""
     card_id = extra.get("card_id", "black_knight_001")
     _apply_spawn_permanent(gs, controller, card_id, extra.get("card_loader"))
-    
     return [_permanent_enters(card_id, controller)]
 
 
-# ── Dispatch table ───────────────────────────────────────────────────────────
+# Dispatch table 
 
 # Maps every card_id_base to its effect handler.
 # Cards not explicitly listed fall through to vanilla handlers based on type.
@@ -913,11 +894,11 @@ EFFECT_HANDLERS: dict[str, EffectHandler] = {
     "rift_bolt": _effect_rift_bolt,
     "incinerate": _effect_incinerate,
     # Red — Creatures
-    "goblin_guide": _effect_vanilla_creature,  # ATTACKS trigger (RFC §8.6.1)
+    "goblin_guide": _effect_vanilla_creature,
     "goblin_guide_trigger": _effect_goblin_guide_trigger,
-    "goblin_bushwhacker": _effect_vanilla_creature,  # Kicker not automatically handled
+    "goblin_bushwhacker": _effect_vanilla_creature,  
     "reckless_wurm": _effect_vanilla_creature,
-    "monastery_swiftspear": _effect_vanilla_creature,  # Prowess via trigger
+    "monastery_swiftspear": _effect_vanilla_creature,
     "monastery_swiftspear_trigger": _effect_monastery_swiftspear_trigger,
     "wall_of_stone": _effect_vanilla_creature,
     # Blue — Counters / Bounce
@@ -931,18 +912,18 @@ EFFECT_HANDLERS: dict[str, EffectHandler] = {
     "merfolk_looter": _effect_merfolk_looter,
     "prodigal_sorcerer": _effect_prodigal_sorcerer,
     "air_elemental": _effect_vanilla_creature,
-    "phantasmal_bear": _effect_vanilla_creature,  # Illusion sacrifice not implemented
+    "phantasmal_bear": _effect_vanilla_creature,
     # Green — Pump / Utility
     "giant_growth": _effect_giant_growth,
     "rampant_growth": _effect_rampant_growth,
     "naturalize": _effect_naturalize,
     "vines_of_vastwood": _effect_vines_of_vastwood,
     # Green — Creatures
-    "llanowar_elves": _effect_vanilla_creature,  # Mana ability handled elsewhere
+    "llanowar_elves": _effect_vanilla_creature,
     "elvish_mystic": _effect_vanilla_creature,
     "grizzly_bears": _effect_vanilla_creature,
     "leatherback_baloth": _effect_vanilla_creature,
-    "troll_ascetic": _effect_vanilla_creature,  # Hexproof handled in combat, regen not impl.
+    "troll_ascetic": _effect_vanilla_creature,
     # Black — Removal / Utility
     "dark_ritual": _effect_dark_ritual,
     "terror": _effect_terror,
@@ -952,7 +933,7 @@ EFFECT_HANDLERS: dict[str, EffectHandler] = {
     # Black — Creatures
     "gray_merchant": _effect_gray_merchant,
     "gravedigger": _effect_gravedigger,
-    "royal_assassin": _effect_vanilla_creature,  # Tap ability handled elsewhere
+    "royal_assassin": _effect_vanilla_creature,
     "black_knight": _effect_black_knight,
     # White — Removal / Utility
     "swords_to_plowshares": _effect_swords_to_plowshares,
@@ -961,9 +942,9 @@ EFFECT_HANDLERS: dict[str, EffectHandler] = {
     "pacifism": _effect_pacifism,
     # White — Creatures
     "white_knight": _effect_white_knight,
-    "serra_angel": _effect_vanilla_creature,  # Flying+Vigilance tracked via keywords
+    "serra_angel": _effect_vanilla_creature,
     "savannah_lions": _effect_vanilla_creature,
-    "mother_of_runes": _effect_vanilla_creature,  # Protection ability handled elsewhere
+    "mother_of_runes": _effect_vanilla_creature,
     # Colorless
     "sol_ring": _effect_sol_ring,
     "ornithopter": _effect_vanilla_creature,
@@ -971,7 +952,7 @@ EFFECT_HANDLERS: dict[str, EffectHandler] = {
     "rod_of_ruin": _effect_rod_of_ruin,
 }
 
-
+# dispatch a card effect
 def resolve_effect(
     gs: GameState,
     card_id_base: str,
@@ -980,80 +961,56 @@ def resolve_effect(
     abilities: list[dict[str, Any]] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Resolve a card's effect and return a list of state-change dicts.
-
-    Parameters
-    ----------
-    gs :
-        The current game state (may be mutated by the handler).
-    card_id_base :
-        The base identifier (e.g. ``'lightning_bolt'``).
-    controller :
-        Player ID of the spell/ability controller.
-    targets :
-        List of target IDs (player_id or permanent_id).
-    abilities :
-        List of parsed ability dicts from ``CardDef.abilities``.
-    extra :
-        Extra context (e.g. ``{'card_id': 'goblin_guide_001'}``).
-
-    Returns
-    -------
-    A list of state-change dicts describing what the effect did.
-    """
     handler = EFFECT_HANDLERS.get(card_id_base)
     if handler is None:
-        # Unknown card — return empty (no effect).
+        # unknown card return empty (no effect).
         return []
     return handler(gs, controller, targets, abilities or [], extra or {})
 
 
-# ── Keyword ability helpers ──────────────────────────────────────────────────
+# Keyword ability helpers 
 
-
+# check whether abilities include a keyword
 def has_keyword(abilities: list[dict[str, Any]], keyword: str) -> bool:
-    """Return ``True`` if the ability list contains the given keyword."""
     for ab in abilities:
         if ab.get("type") == "keyword" and ab.get("name") == keyword:
             return True
     return False
 
-
+# check whether abilities include haste
 def has_haste(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "haste")
 
-
+# check whether abilities include flying
 def has_flying(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "flying")
 
-
+# check whether abilities include first strike
 def has_first_strike(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "first_strike")
 
-
+# check whether abilities include trample
 def has_trample(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "trample")
 
-
+# check whether abilities include defender
 def has_defender(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "defender")
 
-
+# check whether abilities include vigilance
 def has_vigilance(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "vigilance")
 
-
+# check whether abilities include hexproof
 def has_hexproof(abilities: list[dict[str, Any]]) -> bool:
     return has_keyword(abilities, "hexproof")
 
-
+# check whether abilities include protection
 def has_protection(abilities: list[dict[str, Any]], colour: str) -> bool:
-    """Return ``True`` if the creature has protection from *colour*."""
     return has_keyword(abilities, "protection")
 
 
-# ── Triggered-ability helpers ────────────────────────────────────────────────
-
+# Triggered-ability helpers 
 
 TRIGGER_EVENT_TYPES = {
     "ENTERS_BATTLEFIELD",
@@ -1062,8 +1019,9 @@ TRIGGER_EVENT_TYPES = {
     "DIES",
     "END_STEP",
 }
+# dispatch a card effect
 
-# Static registry of card_id_base values that produce triggers with their
+# registry of card_id_base values that produce triggers with their
 # event type and a summary of what happens.
 TRIGGER_REGISTRY: dict[str, list[dict[str, Any]]] = {
     "goblin_guide": [
@@ -1105,7 +1063,7 @@ TRIGGER_REGISTRY: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
-
+# collect trigger data for an event
 def check_triggers(
     gs: GameState,
     event_type: str,
@@ -1113,22 +1071,9 @@ def check_triggers(
     controller: str,
     targets: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Check if any permanents on the battlefield trigger on *event_type*.
-
-    Uses a static registry of known triggered abilities.  For each matching
-    permanent found, a trigger descriptor is returned.  The server's
-    ``GameLifecycle`` will present ``TRIGGER_ORDER`` / ``TRIGGER_CHOICE``
-    PDUs for these triggers.
-
-    Returns a list of trigger descriptors::
-
-        [{"trigger_id": "trg_01", "source": "gray_merchant_001",
-          "effect_summary": "...", "requires_target": False,
-          "legal_targets": []}]
-    """
     triggers: list[dict[str, Any]] = []
 
-    # Scan every permanent on the battlefield.
+    # scan every permanent on the battlefield
     for pid, perms in gs.battlefield.items():
         for perm in perms:
             base_id = perm.card_def_id
