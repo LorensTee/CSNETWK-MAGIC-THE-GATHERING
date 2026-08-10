@@ -1,17 +1,5 @@
-"""
-server/combat.py — Combat System (Module 02: Server Engine)
-
-Implements the full MTGNP combat sequence (RFC §8):
-
-1. Declare Attackers  — AP chooses which creatures attack and whom they attack.
-2. Declare Blockers   — NAP chooses which creatures block which attackers.
-3. Assign Damage Order — AP orders blockers for multi-blocked attackers.
-4. First Strike Damage — Only creatures with first strike deal damage.
-5. Combat Damage      — All remaining creatures deal damage simultaneously.
-
-This module returns data structures — the caller (``GameLifecycle``) broadcasts
-``COMBAT_DAMAGE_RESULT`` and ``PHASE_TRANSITION`` PDUs.
-"""
+# combat system module
+# handles mtgnp combat steps like attacking blocking and damage calculation
 
 from __future__ import annotations
 
@@ -21,11 +9,8 @@ from server.game_state import GameState, Permanent
 
 
 class CombatManager:
-    """Manages the current combat phase's state.
-
-    Tracks attacking creatures, blocking assignments, and damage order.
-    All damage computation is done here; the caller just broadcasts results.
-    """
+    # combat manager class
+	# keeps track of attackers blockers damage ordering and damage events
 
     def __init__(self) -> None:
         # creature_id → target player_id
@@ -42,7 +27,7 @@ class CombatManager:
         self.rejected_attackers: list[dict[str, str]] = []
 
     def reset(self) -> None:
-        """Clear all combat state (called after combat phase resolves)."""
+        # init method sets up empty dicts and sets for combat tracking
         self.attackers.clear()
         self.blockers.clear()
         self.damage_order.clear()
@@ -50,25 +35,14 @@ class CombatManager:
         self.rejected_attackers.clear()
 
     def set_attackers(self, gs: GameState, player: str, attackers: list[dict[str, str]]) -> list[dict[str, Any]]:
-        """Record and validate declared attackers.
+        # record and validate declared attackers
 
-        Parameters
-        ----------
-        gs :
-            Game state (mutated: attackers tapped unless they have vigilance).
-        player :
-            Attacking player ID (AP).
-        attackers :
-            List of ``{'creature_id': ..., 'target': ...}`` dicts.
-
-        Returns
-        -------
-        State-change dicts describing the tap events.
-        """
+		# clear existing attackers and rejections
         self.attackers.clear()
         self._attacking_creatures.clear()
         self.rejected_attackers.clear()
 
+		# check each attacker entry
         changes: list[dict[str, Any]] = []
         for entry in attackers:
             cid = entry["creature_id"]
@@ -76,12 +50,14 @@ class CombatManager:
 
             perm = self._find_permanent(gs, player, cid)
 
+			# check if on battlefield
             if not perm:
                 self.rejected_attackers.append({
                     "creature_id": cid, "reason": "not_on_battlefield",
                 })
                 continue
 
+			# check if tapped
             if perm.tapped:
                 print(f"[Combat] Rejected {cid}: Already tapped!")
                 self.rejected_attackers.append({
@@ -89,6 +65,7 @@ class CombatManager:
                 })
                 continue
 
+			# check summoning sickness
             if getattr(perm, "summoning_sick", False):
                 print(f"[Combat] Rejected {cid}: Summoning sickness!")
                 self.rejected_attackers.append({
@@ -96,6 +73,7 @@ class CombatManager:
                 })
                 continue
 
+			# check defender keyword
             if any(
                 a.get("type") == "keyword" and a.get("name") == "defender"
                 for a in getattr(perm, "abilities", [])
@@ -106,6 +84,7 @@ class CombatManager:
                 })
                 continue
 
+			# check if actually a creature with power
             if not hasattr(perm, 'power') or perm.power is None:
                 print(f"[Combat] Rejected {cid}: Not a creature!")
                 self.rejected_attackers.append({
@@ -113,11 +92,11 @@ class CombatManager:
                 })
                 continue
 
-            # ✅ SAFE TO ADD NOW!
+            # safe to add attacker now
             self.attackers[cid] = target
             self._attacking_creatures.add(cid)
 
-            # Check vigilance via abilities and tap if needed.
+            # tap creature if it does not have vigilance
             has_vigilance = any(
                 a.get("type") == "keyword" and a.get("name") == "vigilance"
                 for a in getattr(perm, "abilities", [])
@@ -130,10 +109,8 @@ class CombatManager:
         return changes
 
     def set_blockers(self, gs: GameState, player: str, blockers: list[dict[str, str]]) -> list[dict[str, Any]]:
-        """Record declared blockers.
-
-        Blockers do NOT tap (unlike attackers).
-        """
+        # record blockers
+		# blockers do not tap
         self.blockers.clear()
         for entry in blockers:
             cid = entry["creature_id"]
@@ -141,61 +118,34 @@ class CombatManager:
             self.blockers[cid] = blocking
         return []
 
+	# set damage order for multi blocked attackers
     def set_damage_order(self, attacker_id: str, blocker_order: list[str]) -> None:
-        """Record the damage order for a multi-blocked attacker.
-
-        The attacker deals damage to blockers in *blocker_order*; damage
-        must be lethal to each before proceeding to the next.
-        """
+        
         self.damage_order[attacker_id] = list(blocker_order)
 
+	# check if any attacker or blocker has first strike or double strike
     def has_first_strike_participants(self, gs: GameState) -> bool:
-        """Return ``True`` if any attacking or blocking creature has first
-        strike or double strike (RFC §9.6: the First Strike Damage Step is
-        optional and only runs when such a creature is present).
-        """
         for cid in list(self.attackers) + list(self.blockers):
             perm = self._find_any_permanent(gs, cid)
             if perm is not None and self._deals_first_strike(perm):
                 return True
         return False
-
+		
+	# compute first strike damage step
     def compute_first_strike_damage(self, gs: GameState) -> dict[str, Any]:
-        """Compute first strike damage step.
-
-        Only creatures with first strike deal damage in this step.
-        Non-first-strike creatures wait for the regular combat damage step.
-
-        Returns
-        -------
-        A dict with keys *damage_events*, *life_totals*, *creatures_died*.
-        """
+        
         return self._compute_damage(gs, first_strike_only=True)
 
+	# set damage order for multi blocked attackers
     def compute_combat_damage(self, gs: GameState) -> dict[str, Any]:
-        """Compute regular (non-first-strike) combat damage step.
-
-        All surviving creatures (without first strike, or creatures with
-        double strike) deal damage simultaneously.
-
-        Returns
-        -------
-        A dict with keys *damage_events*, *life_totals*, *creatures_died*.
-        """
         return self._compute_damage(gs, first_strike_only=False)
 
+	# core damage logic for both first strike and normal damage
     def _compute_damage(self, gs: GameState, first_strike_only: bool) -> dict[str, Any]:
-        """Core damage computation logic.
-
-        * If *first_strike_only* is ``True``, only first-strike creatures deal
-          and receive damage.
-        * If *first_strike_only* is ``False``, only non-first-strike creatures
-          deal and receive damage.
-        """
         damage_events: list[dict[str, Any]] = []
         creatures_died: list[str] = []
 
-        # Find the defending player (non-AP).
+        # find defending player id
         ap_id = gs.active_player or ""
         def_id = ""
         for pid in gs.player_ids:
@@ -203,41 +153,37 @@ class CombatManager:
                 def_id = pid
                 break
 
-        # ── Attacking creatures deal damage ──────────────────────────────
+        # attackers deal damage
         for cid, target in self.attackers.items():
             perm = self._find_permanent(gs, ap_id, cid)
             if perm is None:
-                continue  # Attacker died in first strike step.
+                continue
 
+			# check first strike timing rules
             if first_strike_only:
-                # FS step: first strike AND double strike creatures deal damage.
                 if not self._deals_first_strike(perm):
                     continue
+			# check normal step timing rules
             else:
-                # Normal step: pure first-strike creatures already dealt
-                # damage; double strike deals damage in BOTH steps (§9.7).
                 if self._has_first_strike(perm) and not self._has_double_strike(perm):
                     continue
 
             power = perm.power
 
-            # Is this attacker blocked?
             blockers_for_this = [
                 b_id for b_id, a_id in self.blockers.items() if a_id == cid
             ]
 
             if not blockers_for_this:
-                # Unblocked → damage to defending player.
+                # damage to player if unblocked
                 damage_events.append({
                     "source": cid,
                     "target": target,
                     "amount": power,
                 })
-                # Apply trample to player if unblocked and has trample (redundant).
             else:
-                # Blocked → damage to blockers in order (with trample overflow).
+                # damage to blockers in order if blocked
                 remaining = power
-                # Get damage order if multi-block, otherwise single blocker.
                 ordered = self.damage_order.get(cid, blockers_for_this)
                 for blocker_id in ordered:
                     if blocker_id not in blockers_for_this:
@@ -246,7 +192,7 @@ class CombatManager:
                         gs, def_id, blocker_id
                     )
                     if blocker_perm is None:
-                        continue  # Blocker already died this step.
+                        continue
 
                     lethal = blocker_perm.toughness - blocker_perm.damage
                     dealt = min(remaining, lethal)
@@ -259,15 +205,11 @@ class CombatManager:
                     blocker_perm.damage += dealt
                     remaining -= dealt
 
-                    # Check if blocker dies.
+                    # check if blocker dies
                     if blocker_perm.damage >= blocker_perm.toughness:
                         creatures_died.append(blocker_id)
 
-                # NOTE: MTGNP 1.0 does NOT implement trample (RFC §9.7).
-                # A blocked attacker never deals damage to the defending
-                # player; leftover damage is simply not assigned.
-
-        # ── Blocking creatures deal damage to their attackers ────────────
+		# blockers deal damage to attackers
         for b_id, a_id in self.blockers.items():
             b_perm = self._find_permanent(gs, def_id, b_id)
             if b_perm is None:
@@ -293,11 +235,11 @@ class CombatManager:
                 })
                 a_perm.damage += b_power
 
-                # Check if attacker dies.
+                # check if attacker dies
                 if a_perm.damage >= a_perm.toughness:
                     creatures_died.append(a_id)
 
-        # ── Compute updated life totals ──────────────────────────────────
+        # update life totals
         new_life = dict(gs.life_totals)
         for event in damage_events:
             target = event["target"]
@@ -307,7 +249,7 @@ class CombatManager:
                 
         gs.life_totals = new_life
 
-        # ── Apply deaths ─────────────────────────────────────────────────
+        # move dead creatures to graveyard
         for died_id in creatures_died:
             for pid, perms in gs.battlefield.items():
                 for i, perm in enumerate(perms):
@@ -323,55 +265,51 @@ class CombatManager:
             "creatures_died": creatures_died,
         }
 
-    # ── Internal helpers ─────────────────────────────────────────────────
-
+    # helper to find permanent on player battlefield
     def _find_permanent(
         self, gs: GameState, player: str, permanent_id: str
     ) -> Permanent | None:
-        """Look up a permanent on the battlefield by ID."""
         for perm in gs.battlefield.get(player, []):
             if perm.id == permanent_id:
                 return perm
         return None
 
+	# helper to find permanent on any battlefield
     @staticmethod
     def _find_any_permanent(gs: GameState, permanent_id: str) -> Permanent | None:
-        """Look up a permanent on any player's battlefield by ID."""
         for perms in gs.battlefield.values():
             for perm in perms:
                 if perm.id == permanent_id:
                     return perm
         return None
 
+	# check if creature deals first strike or double strike damage
     @staticmethod
     def _deals_first_strike(perm: Permanent) -> bool:
-        """Return ``True`` if the permanent deals damage in the first strike
-        step (has first strike OR double strike).
-        """
         return (
             CombatManager._has_first_strike(perm)
             or CombatManager._has_double_strike(perm)
         )
 
+	# check first strike keyword
     @staticmethod
     def _has_first_strike(perm: Permanent) -> bool:
-        """Return ``True`` if the permanent has first strike."""
         return any(
             a.get("type") == "keyword" and a.get("name") == "first_strike"
             for a in getattr(perm, "abilities", [])
         )
 
+	# check double strike keyword
     @staticmethod
     def _has_double_strike(perm: Permanent) -> bool:
-        """Return ``True`` if the permanent has double strike."""
         return any(
             a.get("type") == "keyword" and a.get("name") == "double_strike"
             for a in getattr(perm, "abilities", [])
         )
 
+	# check vigilance keyword
     @staticmethod
     def _has_vigilance(perm: Permanent) -> bool:
-        """Return ``True`` if the permanent has vigilance."""
         return any(
             a.get("type") == "keyword" and a.get("name") == "vigilance"
             for a in getattr(perm, "abilities", [])
