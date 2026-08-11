@@ -258,7 +258,7 @@ def validate_play_land(
     card_loader
 ) -> ValidationResult:
     # validate land playing
-	# check active player phase land count stack and if u have the land
+    # check active player phase land count stack and if u have the land
 
     # 1 check active player
     if state.active_player != player:
@@ -332,7 +332,7 @@ def validate_attack(
     attackers: list[dict[str, str]],
 ) -> ValidationResult:
     # validate attackers
-	# check active player phase untapped sick and target
+    # check active player phase untapped sick and target
     if state.active_player != player:
         return False, "NOT_YOUR_PRIORITY", "You are not the active player."
     if state.phase != "DECLARE_ATTACKERS":
@@ -378,7 +378,7 @@ def validate_block(
     blockers: list[dict[str, str]],
 ) -> ValidationResult:
     # validate blockers
-	# check non active player phase untapped and 1 block per creature
+    # check non active player phase untapped and 1 block per creature
 
     if state.active_player == player:
         return False, "NOT_YOUR_PRIORITY", "You are not the defending player."
@@ -401,7 +401,7 @@ def validate_block(
         if perm is None:
             return False, "ILLEGAL_ACTION", f"'{cid}' is not on your battlefield."
 
-		# tap check
+        # tap check
         if perm.tapped:
             return False, "ILLEGAL_ACTION", f"'{cid}' is tapped and cannot block."
 
@@ -422,7 +422,7 @@ def validate_mulligan(
     cards_to_bottom: list[str],
 ) -> ValidationResult:
     # validate mulligan choice
-	# check keep or bottom rules based on mulligan count
+    # check keep or bottom rules based on mulligan count
     mull_count = state.mulligan_counts.get(player, 0)
 
     if not keep:
@@ -449,7 +449,7 @@ def validate_discard(
     card_ids: list[str],
 ) -> ValidationResult:
     # validate cleanup step discard
-	# check hand size and make sure discarded cards are in hand
+    # check hand size and make sure discarded cards are in hand
     hand = state.hands.get(player, [])
     hand_size = len(hand)
 
@@ -475,7 +475,7 @@ def validate_deck(
     card_loader: CardLoader,
 ) -> ValidationResult:
     # validate player ready deck list
-	# check deck legal rules like 1-50 cards
+    # check deck legal rules like 1-50 cards
     ok, msg = card_loader.is_legal_deck(deck_list)
     if not ok:
         return False, "ILLEGAL_DECK", msg
@@ -488,7 +488,7 @@ def validate_target(
     legal_targets: list[str],
 ) -> ValidationResult:
     # validate target
-	# check if target in legal targets list
+    # check if target in legal targets list
     if target_id not in legal_targets:
         return False, "ILLEGAL_TARGET", f"'{target_id}' is not a legal target."
     return True, None, ""

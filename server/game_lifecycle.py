@@ -75,11 +75,11 @@ class GameLifecycle:
         )
 
         # used to route PDUs during priority windows, keyed by player_id
-		# one future per player at a time
+        # one future per player at a time
         self._pending_pdu: dict[str, asyncio.Future[dict]] = {}
 
         # keep _end_game task spawned from _check_game_over
-		# ensure it cannot be GC'd mid-run
+        # ensure it cannot be GC'd mid-run
         self._pending_end_task: asyncio.Task | None = None
 
         # async safety lock 
@@ -104,24 +104,24 @@ class GameLifecycle:
     async def wait_for_pdu(
         self, player_id: str, timeout: float
     ) -> dict[str, Any]:
-		# make a future for the player's incoming move
+        # make a future for the player's incoming move
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._pending_pdu[player_id] = future
 
-		# spawn background task just in case game_over
+        # spawn background task just in case game_over
         game_over_task = asyncio.create_task(self._game_over.wait())
         try:
 
-			# wait for three outcomes: player sends a packet, doesnt send a packet
-			# or gameover from conceding, disconnecting, or lost
+            # wait for three outcomes: player sends a packet, doesnt send a packet
+            # or gameover from conceding, disconnecting, or lost
             done, _ = await asyncio.wait(
                 {asyncio.ensure_future(future), game_over_task},
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=timeout,
             )
 
-			# if future is fulfilled, attach sender as player_id
+            # if future is fulfilled, attach sender as player_id
             if future in done:
                 pdu = future.result()
                 pdu["_player_id"] = player_id
@@ -131,15 +131,15 @@ class GameLifecycle:
             if self._game_over.is_set():
                 raise GameOverInterrupt()
 
-			# well if not, player timed out
-			# engine now decides what to do with that
+            # well if not, player timed out
+            # engine now decides what to do with that
             raise asyncio.TimeoutError()
         finally:
-			# remove leaking bg task
+            # remove leaking bg task
             game_over_task.cancel()
 
-			# remove pending pdu handler, so that other packets 
-			# don't go here
+            # remove pending pdu handler, so that other packets 
+            # don't go here
             if self._pending_pdu.get(player_id) is future:
                 self._pending_pdu.pop(player_id, None)
 
@@ -147,13 +147,13 @@ class GameLifecycle:
     
     #run the entire life cycle
     async def run(self) -> None:
-		# get connections
-		# if connections are less than two, bail
+        # get connections
+        # if connections are less than two, bail
         conns = self.connections
         if len(conns) < 2:
             return
 
-		# reset player ids so lobby can track READY handshakes
+        # reset player ids so lobby can track READY handshakes
         for conn in conns:
             conn.player_id = None
 
@@ -161,7 +161,7 @@ class GameLifecycle:
         read_tasks = [asyncio.create_task(conn.read_loop()) for conn in conns]
         try:
             while True:
-				# start new game fresh
+                # start new game fresh
                 self._game_over.clear()
                 gs = self.gs
 
@@ -186,10 +186,10 @@ class GameLifecycle:
                 # start core turn engine
                 await self._run_in_game(gs, conns)
 
-				# wait for game over
+                # wait for game over
                 await self._run_game_over(gs, conns)
         finally:
-			# remove bg tasks
+            # remove bg tasks
             for task in read_tasks:
                 task.cancel()
 
@@ -201,7 +201,7 @@ class GameLifecycle:
     ) -> None:
         gs.phase = "LOBBY"
 
-		# wait until 2 plays are ready.
+        # wait until 2 plays are ready.
         while gs.players_ready < 2 and not self._game_over.is_set():
             await asyncio.sleep(0.1)  # Yield - dispatcher updates state.
 
@@ -219,27 +219,27 @@ class GameLifecycle:
     async def _run_setup(
         self, gs: GameState, conns: list[ServerConnection]
     ) -> None:
-		# set phase to game_setup
+        # set phase to game_setup
         gs.phase = "GAME_SETUP"
 
-		# set timeout in seconds, derived from prio mgr's miliseconds
+        # set timeout in seconds, derived from prio mgr's miliseconds
         timeout_s = self.priority_mgr.config.time_limit_ms / 1000.0
         
-		# validates both deck lists using stored lists.
+        # validates both deck lists using stored lists.
         for pid in gs.player_ids:
             while True:
                 deck = self._deck_lists.get(pid, [])
                 ok, msg = self.card_loader.is_legal_deck(deck)
                 if ok:
                     break
-				# an invalid deck is answered with ERROR ILLEGAL_DECK
+                # an invalid deck is answered with ERROR ILLEGAL_DECK
                 # (GAME_OVER reasons are WIN/LOSS/CONCEDE/DISCONNECT only).
                 await self.send_error(
                     self._connection_for(pid), "ILLEGAL_DECK", msg,
                     {"type": "PLAYER_READY"},
                 )
                 # wait for a corrected deck; a disconnect ends the game.
-				# re-ready is handled in handle_player_ready
+                # re-ready is handled in handle_player_ready
                 try:
                     response = await asyncio.wait_for(
                         self.wait_for_pdu(pid, timeout_s), timeout=timeout_s
@@ -252,11 +252,11 @@ class GameLifecycle:
                     )
                     return
 
-				# if player is ready
+                # if player is ready
                 if response and response.get("type") == "PLAYER_READY":
                     deck = response.get("deck_list", [])
 
-					# second check
+                    # second check
                     ok2, msg2 = self.card_loader.is_legal_deck(deck)
                     if ok2:
                         self._deck_lists[pid] = deck
@@ -267,7 +267,7 @@ class GameLifecycle:
                         )
 
         # broadcast GAME_SETUP state
-		# server is setting up
+        # server is setting up
         for pid in gs.player_ids:
             gsu = create_game_state_update(seq_num=0, state={
                 "phase": "GAME_SETUP",
@@ -277,8 +277,8 @@ class GameLifecycle:
             await self.send_to(pid, gsu)
 
         # copy cards from self._desk_lists to gs.libraries
-		# if you modify or pop cards from libraries, it doesn't 
-		# change the source material (_deck_lists)
+        # if you modify or pop cards from libraries, it doesn't 
+        # change the source material (_deck_lists)
         for pid in gs.player_ids:
             gs.libraries[pid] = list(self._deck_lists.get(pid, []))
             gs.hands[pid] = []
@@ -317,7 +317,7 @@ class GameLifecycle:
     async def _run_mulligan(
         self, gs: GameState, conns: list[ServerConnection]
     ) -> None:
-		# set game phase to mulligan and set all player redraw counts to 0
+        # set game phase to mulligan and set all player redraw counts to 0
         gs.phase = "MULLIGAN"
         gs.mulligan_counts = {pid: 0 for pid in gs.player_ids}
 
@@ -329,20 +329,20 @@ class GameLifecycle:
         ]
 
         if kept_tasks:
-			# start a background task watching for disconnects or forfeits
+            # start a background task watching for disconnects or forfeits
             keep_futures = {asyncio.ensure_future(t) for t in kept_tasks}
             game_over_task = asyncio.create_task(self._game_over.wait())
 
             try:
-				# loop until every player keeps
-				# wake up when any task completes.
+                # loop until every player keeps
+                # wake up when any task completes.
                 while keep_futures:
                     done, pending = await asyncio.wait(
                         keep_futures | {game_over_task},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
 
-					# if the game ends early, cancel remaining 
+                    # if the game ends early, cancel remaining 
                     # keep checks and exit immediately.
                     if game_over_task in done:
                         for fut in keep_futures:
@@ -351,20 +351,20 @@ class GameLifecycle:
                     keep_futures = pending - {game_over_task}
                 return  # all players kept.
             finally:
-				# cleanup
+                # cleanup
                 game_over_task.cancel()
 
     #run turns until game over
     async def _run_in_game(
         self, gs: GameState, conns: list[ServerConnection]
     ) -> None:
-		# keep playing turns in a loop until a game-over flag is set
+        # keep playing turns in a loop until a game-over flag is set
         while not self._game_over.is_set():
-			# identify who is active and who is opponent
+            # identify who is active and who is opponent
             ap_id = gs.active_player or gs.player_ids[0]
             nap_id = self._opponent(ap_id) or gs.player_ids[1]
 
-			# grab connection references for active and non-active players
+            # grab connection references for active and non-active players
             ap_conn = conns[self._player_index[ap_id]]
             nap_conn = conns[self._player_index[nap_id]]
 
@@ -380,25 +380,25 @@ class GameLifecycle:
         self, gs: GameState, conns: list[ServerConnection]
     ) -> None:
         
-		# reset the phase back to LOBBY and reset the turn counter to zero
+        # reset the phase back to LOBBY and reset the turn counter to zero
         gs.phase = "LOBBY"
         gs.turn = 0
         
-		# clear all active match zones including hands, battlefield, deck, and stack
+        # clear all active match zones including hands, battlefield, deck, and stack
         gs.stack.clear()
         gs.hands.clear()
         gs.libraries.clear()
         gs.graveyards.clear()
         gs.battlefield.clear()
         
-		# reset health, mulligans, land actions, and floating mana pools
+        # reset health, mulligans, land actions, and floating mana pools
         gs.life_totals.clear()
         gs.land_played_this_turn = False
         gs.mulligan_counts.clear()
         gs.stack_counter = 0
         gs.mana_pools = {}
 
-		# clear match flags and wipe cached data in stack and combat managers.
+        # clear match flags and wipe cached data in stack and combat managers.
         gs._draw_failed_for = None
         gs._cleanup_discard_for = None
         self.stack_mgr.clear_cache()
@@ -410,7 +410,7 @@ class GameLifecycle:
         self, gs: GameState, ap_id: str, nap_id: str, phase: str
     ) -> None:
         
-		# set current game phase and give priority to non-active player if declaring blockers.
+        # set current game phase and give priority to non-active player if declaring blockers.
         gs.phase = phase
         if phase == "DECLARE_BLOCKERS":
             gs.priority_holder = nap_id
@@ -469,7 +469,7 @@ class GameLifecycle:
             return
 
         if phase == "DECLARE_BLOCKERS":
-			# prompt non-active player to choose blockers
+            # prompt non-active player to choose blockers
             try:
                 both, action = await self.priority_mgr.run_priority_window(
                     self._connection_for(nap_id),
@@ -480,14 +480,14 @@ class GameLifecycle:
             except GameOverInterrupt:
                 return
             
-			# save declared blockers and broadcast state to clients
+            # save declared blockers and broadcast state to clients
             if action and action.get("type") == "DECLARE_BLOCKERS":
                 blockers = action.get("blockers", [])
                 self.combat_mgr.set_blockers(gs, nap_id, blockers)
                 
             await self._broadcast_game_state(gs)
 
-			# allow players to respond with instant speed spells after blocking  
+            # allow players to respond with instant speed spells after blocking  
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
 
@@ -499,7 +499,7 @@ class GameLifecycle:
                        if a == a_id]) > 1
             ]
 
-			# for each multi blocked attacker, ask active player to set damage order
+            # for each multi blocked attacker, ask active player to set damage order
             for a_id in multi_blocked:
                 expected_blockers = {
                     b for b, a in self.combat_mgr.blockers.items()
@@ -507,8 +507,8 @@ class GameLifecycle:
                 }
                 conn = self._connection_for(ap_id)
 
-				# try getting dmg ordering response
-				# if timeout/disconnect, forfeit player
+                # try getting dmg ordering response
+                # if timeout/disconnect, forfeit player
                 try:
                     response = await self.priority_mgr.grant_priority(
                         conn, ap_id, read_pdu=self.wait_for_pdu,
@@ -522,7 +522,7 @@ class GameLifecycle:
                     )
                     return
 
-				# if valid, apply damage order
+                # if valid, apply damage order
                 if response and response.get("type") == "ASSIGN_DAMAGE_ORDER":
                     r_aid = response.get("attacker_id", "")
                     order = response.get("blocker_order", [])
@@ -542,7 +542,7 @@ class GameLifecycle:
                 gs._skip_to_phase = "COMBAT_DAMAGE"
                 return
 
-			# compute first strike dmg, remove dead units, broadcast result
+            # compute first strike dmg, remove dead units, broadcast result
             result = self.combat_mgr.compute_first_strike_damage(gs)
             check_state_based_actions(gs, self.card_loader)
             await self._broadcast_combat_result(gs, result)
@@ -565,7 +565,7 @@ class GameLifecycle:
             # 4. broadcast the FULL updated game state to update the clients UI
             await self._broadcast_game_state(gs)
             
-			# reset combat state tracker, give prio to players
+            # reset combat state tracker, give prio to players
             self.combat_mgr.reset()
             await self._run_priority_loop(gs, ap_id, nap_id)
             return
@@ -585,22 +585,22 @@ class GameLifecycle:
         await self._run_priority_loop(gs, ap_id, nap_id)
 
     async def _run_cleanup_discard(self, gs: GameState, pid: str) -> None:
-		# acquire connection info
-		# calculate maximum wait time in seconds
+        # acquire connection info
+        # calculate maximum wait time in seconds
         conn = self._connection_for(pid)
         timeout_s = self.priority_mgr.config.time_limit_ms / 1000.0
 
-		# request discards until player hand size is 7 or less
+        # request discards until player hand size is 7 or less
         while len(gs.hands.get(pid, [])) > 7:
 
             # send the updated state first
-			# let the player pick a card
+            # let the player pick a card
             vs = build_visible_state(gs, pid)
             gsu = create_game_state_update(seq_num=0, state=vs)
             await self.send_to(pid, gsu)
 
-			# wait for the player to respond
-			# if not, trigger game over
+            # wait for the player to respond
+            # if not, trigger game over
             try:
                 response = await asyncio.wait_for(
                     self.wait_for_pdu(pid, timeout_s), timeout=timeout_s
@@ -614,8 +614,8 @@ class GameLifecycle:
                 )
                 return
 
-			# check if player sent discard action
-			# reject if they send something else
+            # check if player sent discard action
+            # reject if they send something else
             if not response or response.get("type") != "DISCARD":
                 await self.send_error(
                     conn, "ILLEGAL_ACTION",
@@ -623,15 +623,15 @@ class GameLifecycle:
                 )
                 continue
 
-			# validate the selected cards
-			# ask again if selection made is illegal
+            # validate the selected cards
+            # ask again if selection made is illegal
             card_ids = response.get("card_ids", [])
             ok, code, msg = validate_discard(gs, pid, card_ids)
             if not ok:
                 await self.send_error(conn, code or "ILLEGAL_ACTION", msg, response)
                 continue
 
-			# move discarded cards from player's hand into graveyard
+            # move discarded cards from player's hand into graveyard
             hand = gs.hands.get(pid, [])
             for cid in card_ids:
                 if cid in hand:
@@ -651,7 +651,7 @@ class GameLifecycle:
         self, gs: GameState, from_phase: str, to_phase: str
     ) -> None:
 
-		# find active players and send phase change msg to everyone
+        # find active players and send phase change msg to everyone
         ap_id = gs.active_player or (gs.player_ids[0] if gs.player_ids else "")
         pdu = create_phase_transition(
             seq_num=0,
@@ -668,10 +668,10 @@ class GameLifecycle:
 
         actor: str | None = None
 
-		# keep handling player prioity actions until match ends
+        # keep handling player prioity actions until match ends
         while not self._game_over.is_set():
 
-			# check rule state actions, update players and stop if someone lost
+            # check rule state actions, update players and stop if someone lost
             sba_changes = check_state_based_actions(gs, self.card_loader)
             if sba_changes:
                 await self._broadcast_game_state(gs)
@@ -685,19 +685,19 @@ class GameLifecycle:
             if actor is not None:
                 first_id, second_id = actor, (nap_id if actor == ap_id else ap_id)
 
-			# update ppl with priority, send state updates if its changed
+            # update ppl with priority, send state updates if its changed
             needs_broadcast = (gs.priority_holder != first_id)
             gs.priority_holder = first_id
 
             if needs_broadcast:
                 await self._broadcast_game_state(gs)
 
-			# helper function to switch priority to other player
+            # helper function to switch priority to other player
             async def flip_to_second():
                 gs.priority_holder = second_id
                 await self._broadcast_game_state(gs)
 
-			# prompt both player for actions, handle d/c or t/o
+            # prompt both player for actions, handle d/c or t/o
             try:
                 both_passed, action, actor = await self.priority_mgr.run_priority_window(
                     self._connection_for(first_id),
@@ -717,14 +717,14 @@ class GameLifecycle:
                 await self._end_game(gs, "DISCONNECT", winner, exc.player_id)
                 return
 
-			# handle outcome when both players pass priority without acting
+            # handle outcome when both players pass priority without acting
             if both_passed:
-				# advance phase if stack is empty, stop when match over
+                # advance phase if stack is empty, stop when match over
                 if self.stack_mgr.is_empty(gs):
                     if self._check_game_over(gs):
                         return
                     break  # advance to next phase
-				# resolve the top spell or ability if stack is NOT empty
+                # resolve the top spell or ability if stack is NOT empty
                 else:
                     resolved_id = gs.stack[-1].stack_item_id if gs.stack else ""
                     result, changes = self.stack_mgr.resolve_top(
@@ -741,7 +741,7 @@ class GameLifecycle:
                     await self._broadcast_game_state(gs)
                     if self._check_game_over(gs):
                         return
-			# process spell/ability/land action if player acted
+            # process spell/ability/land action if player acted
             elif action is not None:
                 await self._process_action(gs, ap_id, nap_id, action)
                 if self._check_game_over(gs):
@@ -750,7 +750,7 @@ class GameLifecycle:
     # Broadcast helpers
 
     async def _broadcast_game_state(self, gs: GameState) -> None:
-		# loop through every player build their private view and send the update
+        # loop through every player build their private view and send the update
         for pid in gs.player_ids:
             vs = build_visible_state(gs, pid)
             pdu = create_game_state_update(seq_num=0, state=vs)
@@ -764,11 +764,11 @@ class GameLifecycle:
     async def _broadcast_combat_result(
         self, gs: GameState, result: dict[str, Any]
     ) -> None:
-		# apply updated player life totals calculated from combat
+        # apply updated player life totals calculated from combat
         new_life = result.get("life_totals", {})
         gs.life_totals.update(new_life)
 
-		# build and send the combat damage event summary to all players
+        # build and send the combat damage event summary to all players
         from shared.pdus import create_combat_damage_result
         pdu = create_combat_damage_result(
             seq_num=0,
@@ -778,28 +778,28 @@ class GameLifecycle:
         )
         await self.broadcast(pdu)
 
-		# send full updated state and check if someone lost the game
+        # send full updated state and check if someone lost the game
         await self._broadcast_game_state(gs)
         self._check_game_over(gs)
 
-	# Action processing
+    # Action processing
     
     #process action during prio
     async def _process_action(
         self, gs: GameState, ap_id: str, nap_id: str, action: dict[str, Any]
     ) -> None:
-		# identify action type and who sent it
+        # identify action type and who sent it
         atype = action.get("type", "")
         print(f"\nBRAIN RECEIVED IT: {action}")
         pid = action.get("_player_id", ap_id)
 
-		# handle casting a spell card from hand
+        # handle casting a spell card from hand
         if atype == "CAST_SPELL":
             card_id = action.get("card_id", "")
             targets = action.get("targets", [])
             mana_payment = action.get("mana_payment", {})
 
-			# verify if the spell cast is allowed by game rules
+            # verify if the spell cast is allowed by game rules
             ok, code, msg = validate_cast_spell(
                 gs, pid, card_id, targets, mana_payment,
                 card_loader=self.card_loader,
@@ -811,7 +811,7 @@ class GameLifecycle:
                 )
                 return
 
-			# subtract the mana cost from the players mana pool
+            # subtract the mana cost from the players mana pool
             try:
                 pool = gs.mana_pools.setdefault(pid, ManaPool.empty())
                 gs.mana_pools[pid] = deduct_mana(mana_payment, pool)
@@ -822,12 +822,12 @@ class GameLifecycle:
                 )
                 return
 
-			# remove the cast card from the players hand
+            # remove the cast card from the players hand
             hand = gs.hands.get(pid, [])
             if card_id in hand:
                 hand.remove(card_id)
 
-			# put the spell onto the game stack and let everyone know
+            # put the spell onto the game stack and let everyone know
             card_def = self.card_loader.get_card(card_id)
             si = self.stack_mgr.push(
                 gs, "SPELL", card_id, pid, targets, card_def
@@ -846,7 +846,7 @@ class GameLifecycle:
             # a noncreature spell is cast.
             await self._maybe_push_cast_triggers(gs, pid, card_def)
 
-		# handle playing a land card onto the board
+        # handle playing a land card onto the board
         elif atype == "PLAY_LAND":
             print("\nENTERED PLAY_LAND BLOCK")
             try:
@@ -854,7 +854,7 @@ class GameLifecycle:
 
                 pid = action.get("player_id") or gs.priority_holder
                 
-				# confirm the land play is legal for this turn
+                # confirm the land play is legal for this turn
                 ok, code, msg = validate_play_land(gs, pid, card_id, self.card_loader)
                 
                 if not ok:
@@ -869,7 +869,7 @@ class GameLifecycle:
                 if card_id in hand:
                     hand.remove(card_id)
                 
-               	# clean up instance suffix to fetch real card stats
+                   # clean up instance suffix to fetch real card stats
                 base_id = card_id
                 if "_" in card_id:
                     parts = card_id.rsplit("_", 1)
@@ -887,7 +887,7 @@ class GameLifecycle:
                             def_id = getattr(cd, attr)
                             break
 
-				# create the new land card permanent for the battlefield
+                # create the new land card permanent for the battlefield
                 perm = Permanent(
                     id=card_id,
                     card_def_id=def_id,
@@ -897,7 +897,7 @@ class GameLifecycle:
                     toughness=toughness or 0,
                     summoning_sick=False,
                 )
-				
+                
                 # place land on battlefield and mark that land was played this turn
                 gs.battlefield.setdefault(pid, []).append(perm)
                 gs.land_played_this_turn = True
@@ -912,7 +912,7 @@ class GameLifecycle:
                 print(f"\nFATAL ENGINE CRASH IN PLAY_LAND:")
                 traceback.print_exc()
 
-		# handle using a land or creature ability
+        # handle using a land or creature ability
         elif atype == "ACTIVATE_ABILITY":
             source_id = action.get("source_id", "")
             ability_index = action.get("ability_index", 0)
@@ -924,7 +924,7 @@ class GameLifecycle:
                     perm = p
                     break
             
-			# send error if card is not found on field
+            # send error if card is not found on field
             if not perm:
                 await self.send_error(
                     self._connection_for(pid),
@@ -932,7 +932,7 @@ class GameLifecycle:
                 )
                 return
 
-			# send error if card is already tapped
+            # send error if card is already tapped
             if perm.tapped:
                 await self.send_error(
                     self._connection_for(pid),
@@ -948,7 +948,7 @@ class GameLifecycle:
                     base_id = parts[0]
             cd = self.card_loader.get_card(base_id)
             
-			# verify that the ability choice index exists on the card
+            # verify that the ability choice index exists on the card
             if not cd or ability_index >= len(cd.abilities):
                 await self.send_error(
                     self._connection_for(pid),
@@ -976,7 +976,7 @@ class GameLifecycle:
                 )
                 return
 
-			# add produced mana amounts to the player pool
+            # add produced mana amounts to the player pool
             pool = gs.mana_pools.setdefault(pid, ManaPool.empty())
             for color, amount in produces.items():
                 current = getattr(pool, color, 0)
@@ -987,14 +987,14 @@ class GameLifecycle:
             # update all clients so they see tapped cards and new mana
             await self._broadcast_game_state(gs)
 
-	# Triggered abilities
+    # Triggered abilities
     
     async def _maybe_push_attack_triggers(
         self, gs: GameState, ap_id: str, nap_id: str
     ) -> None:
         from server.card_effects import check_triggers
 
-		# check each attacking creature to see if it exists on the battlefield
+        # check each attacking creature to see if it exists on the battlefield
         for cid in list(self.combat_mgr.attackers):
             perm = None
             for perms in gs.battlefield.values():
@@ -1004,11 +1004,11 @@ class GameLifecycle:
                         break
             if perm is None:
                 continue
-			# find attack triggers matching this specific attacking creature
+            # find attack triggers matching this specific attacking creature
             for trg in check_triggers(gs, "ATTACKS", cid, ap_id):
                 if trg["source"] != cid:
                     continue  # only the attacking permanent triggers
-				# push attack trigger to the stack and notify both players
+                # push attack trigger to the stack and notify both players
                 si = self.stack_mgr.push_trigger(
                     gs, f"{perm.card_def_id}_trigger", ap_id,
                     targets=[nap_id], source_permanent=cid,
@@ -1028,11 +1028,11 @@ class GameLifecycle:
     ) -> None:
         from server.card_effects import check_triggers
 
-		# check card type and ignore if the spell played is a creature
+        # check card type and ignore if the spell played is a creature
         ctype = getattr(card_def, "card_type", "") if card_def else ""
         if "creature" in ctype.lower():
             return
-		# trigger prowess abilities for all qualifying noncreature spell casts
+        # trigger prowess abilities for all qualifying noncreature spell casts
         for trg in check_triggers(gs, "CAST_NONCREATURE_SPELL", "", pid):
             si = self.stack_mgr.push_trigger(
                 gs, "monastery_swiftspear_trigger", pid,
@@ -1048,7 +1048,7 @@ class GameLifecycle:
             )
             await self.broadcast(pdu)
 
-	# PDU handler methods (called by dispatcher)
+    # PDU handler methods (called by dispatcher)
     # LOBBY 
 
     #process players in lobby
@@ -1080,7 +1080,7 @@ class GameLifecycle:
                                   "Not in LOBBY state.", pdu)
             return
 
-       	# check that player id is provided
+           # check that player id is provided
         if not player_id:
             await self.send_error(conn, "ILLEGAL_ACTION", 
                                   "player_id cannot be empty.", pdu)
@@ -1129,7 +1129,7 @@ class GameLifecycle:
     async def handle_mulligan_choice(
         self, conn: ServerConnection, pdu: dict[str, Any]
     ) -> None:
-		# get the player id attached to this connection
+        # get the player id attached to this connection
         player_id = conn.player_id
         if not player_id:
             return
@@ -1159,11 +1159,11 @@ class GameLifecycle:
                 )
                 return
 
-		# extract player keep decision and bottomed card choices
+        # extract player keep decision and bottomed card choices
         keep = pdu.get("keep", False)
         cards_to_bottom = pdu.get("cards_to_bottom", [])
 
-		# validate whether the mulligan decision follows game rules
+        # validate whether the mulligan decision follows game rules
         ok, code, msg = validate_mulligan(
             self.gs, player_id, keep, cards_to_bottom
         )
@@ -1171,10 +1171,10 @@ class GameLifecycle:
             await self.send_error(conn, code or "ILLEGAL_ACTION", msg, pdu)
             return
 
-		# apply the mulligan outcome to player hand and deck
+        # apply the mulligan outcome to player hand and deck
         process_mulligan_choice(self.gs, player_id, keep, cards_to_bottom)
 
-		# send updated private state back to the deciding player
+        # send updated private state back to the deciding player
         vs = build_visible_state(self.gs, player_id)
         gsu = create_game_state_update(seq_num=0, state=vs)
         await self.send_to(player_id, gsu)
@@ -1183,10 +1183,10 @@ class GameLifecycle:
         if self._game_over.is_set():
             return
         
-		# update sequence number tracking for next incoming message
+        # update sequence number tracking for next incoming message
         self._mulligan_expected_seq[player_id] = conn.seq_num
 
-		# mark player choice complete if they chose to keep their hand
+        # mark player choice complete if they chose to keep their hand
         if keep:
             kept = self._mulligan_kept.get(player_id)
             if kept is not None and not kept.is_set():
@@ -1253,7 +1253,7 @@ class GameLifecycle:
         self, conn: ServerConnection, pdu: dict[str, Any]
     ) -> None:
 
-		# extract player identifier from connection or message payload
+        # extract player identifier from connection or message payload
         player_id = conn.player_id or pdu.get("player_id", "?")
         winner = self._opponent(player_id)
         if winner:
@@ -1263,7 +1263,7 @@ class GameLifecycle:
         self, conn: ServerConnection, pdu: dict[str, Any]
     ) -> None:
 
-		# extract message sequence number and timestamp to mirror back
+        # extract message sequence number and timestamp to mirror back
         seq = pdu.get("seq_num", 0)
         ts = pdu.get("timestamp", 0)
         pong = create_pong(seq_num=seq, timestamp=ts)
@@ -1273,14 +1273,14 @@ class GameLifecycle:
     
     async def send_to(self, player_id: str, pdu: dict[str, Any]) -> None:
 
-		# locate target player's active connection and deliver message
+        # locate target player's active connection and deliver message
         for conn in self.connections:
             if conn.player_id == player_id:
                 await conn.send_pdu(pdu)
                 return
 
     async def broadcast(self, pdu: dict[str, Any]) -> None:
-		# attempt best-effort message delivery across all active connections
+        # attempt best-effort message delivery across all active connections
         for conn in self.connections:
             if conn.player_id and not getattr(conn, "_closed", False):
                 try:
@@ -1295,13 +1295,13 @@ class GameLifecycle:
         message: str,
         rejected_action: dict[str, Any],
     ) -> None:
-		# construct error payload detailing the rejected client action
+        # construct error payload detailing the rejected client action
         pdu = create_error(
             seq_num=0, code=code, message=message,
             rejected_action=rejected_action,
         )
 
-		# echo rejected sequence number if present, otherwise send standard pdu
+        # echo rejected sequence number if present, otherwise send standard pdu
         seq = rejected_action.get("seq_num") if isinstance(rejected_action, dict) else None
         if seq is not None:
             await conn.send_pdu_explicit(pdu, seq)
@@ -1316,14 +1316,14 @@ class GameLifecycle:
         loser_id: str,
     ) -> None:
 
-		# prevent duplicate game-ending execution across concurrent events
+        # prevent duplicate game-ending execution across concurrent events
         if self._game_over.is_set():
             return
 
         # claim the ending before any await.
         self._game_over.set()
 
-		# notify all connected players that the match has ended
+        # notify all connected players that the match has ended
         pdu = create_game_over(
             seq_num=0,
             winner_id=winner_id,
@@ -1348,8 +1348,8 @@ class GameLifecycle:
         # Internal helpers
     
     def _connection_for(self, player_id: str) -> ServerConnection:
-		
-		# return connection for player_id
+        
+        # return connection for player_id
         for conn in self.connections:
             if conn.player_id == player_id:
                 return conn
@@ -1357,7 +1357,7 @@ class GameLifecycle:
 
     def _opponent(self, player_id: str) -> str | None:
 
-		# iterate through game state players to find the opposing player
+        # iterate through game state players to find the opposing player
         for pid in self.gs.player_ids:
             if pid != player_id:
                 return pid
@@ -1365,7 +1365,7 @@ class GameLifecycle:
 
     def _check_game_over(self, gs: GameState) -> bool:
 
-		# evaluate player state for life depletion or empty library draws
+        # evaluate player state for life depletion or empty library draws
         for pid in gs.player_ids:
             if gs.life_totals.get(pid, 20) <= 0:
                 winner = self._opponent(pid) or ""
@@ -1381,7 +1381,7 @@ class GameLifecycle:
             if gs._draw_failed_for == pid:
                 gs._draw_failed_for = None  # Clear after consuming.
                 winner = self._opponent(pid) or ""
-				# schedule async game ending sequence for empty deck draw
+                # schedule async game ending sequence for empty deck draw
                 self._pending_end_task = asyncio.ensure_future(
                     self._end_game(gs, "DECK_EMPTY", winner, pid)
                 )

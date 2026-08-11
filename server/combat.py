@@ -10,7 +10,7 @@ from server.game_state import GameState, Permanent
 
 class CombatManager:
     # combat manager class
-	# keeps track of attackers blockers damage ordering and damage events
+    # keeps track of attackers blockers damage ordering and damage events
 
     def __init__(self) -> None:
         # creature_id → target player_id
@@ -37,12 +37,12 @@ class CombatManager:
     def set_attackers(self, gs: GameState, player: str, attackers: list[dict[str, str]]) -> list[dict[str, Any]]:
         # record and validate declared attackers
 
-		# clear existing attackers and rejections
+        # clear existing attackers and rejections
         self.attackers.clear()
         self._attacking_creatures.clear()
         self.rejected_attackers.clear()
 
-		# check each attacker entry
+        # check each attacker entry
         changes: list[dict[str, Any]] = []
         for entry in attackers:
             cid = entry["creature_id"]
@@ -50,14 +50,14 @@ class CombatManager:
 
             perm = self._find_permanent(gs, player, cid)
 
-			# check if on battlefield
+            # check if on battlefield
             if not perm:
                 self.rejected_attackers.append({
                     "creature_id": cid, "reason": "not_on_battlefield",
                 })
                 continue
 
-			# check if tapped
+            # check if tapped
             if perm.tapped:
                 print(f"[Combat] Rejected {cid}: Already tapped!")
                 self.rejected_attackers.append({
@@ -65,7 +65,7 @@ class CombatManager:
                 })
                 continue
 
-			# check summoning sickness
+            # check summoning sickness
             if getattr(perm, "summoning_sick", False):
                 print(f"[Combat] Rejected {cid}: Summoning sickness!")
                 self.rejected_attackers.append({
@@ -73,7 +73,7 @@ class CombatManager:
                 })
                 continue
 
-			# check defender keyword
+            # check defender keyword
             if any(
                 a.get("type") == "keyword" and a.get("name") == "defender"
                 for a in getattr(perm, "abilities", [])
@@ -84,7 +84,7 @@ class CombatManager:
                 })
                 continue
 
-			# check if actually a creature with power
+            # check if actually a creature with power
             if not hasattr(perm, 'power') or perm.power is None:
                 print(f"[Combat] Rejected {cid}: Not a creature!")
                 self.rejected_attackers.append({
@@ -110,7 +110,7 @@ class CombatManager:
 
     def set_blockers(self, gs: GameState, player: str, blockers: list[dict[str, str]]) -> list[dict[str, Any]]:
         # record blockers
-		# blockers do not tap
+        # blockers do not tap
         self.blockers.clear()
         for entry in blockers:
             cid = entry["creature_id"]
@@ -118,29 +118,29 @@ class CombatManager:
             self.blockers[cid] = blocking
         return []
 
-	# set damage order for multi blocked attackers
+    # set damage order for multi blocked attackers
     def set_damage_order(self, attacker_id: str, blocker_order: list[str]) -> None:
         
         self.damage_order[attacker_id] = list(blocker_order)
 
-	# check if any attacker or blocker has first strike or double strike
+    # check if any attacker or blocker has first strike or double strike
     def has_first_strike_participants(self, gs: GameState) -> bool:
         for cid in list(self.attackers) + list(self.blockers):
             perm = self._find_any_permanent(gs, cid)
             if perm is not None and self._deals_first_strike(perm):
                 return True
         return False
-		
-	# compute first strike damage step
+        
+    # compute first strike damage step
     def compute_first_strike_damage(self, gs: GameState) -> dict[str, Any]:
         
         return self._compute_damage(gs, first_strike_only=True)
 
-	# set damage order for multi blocked attackers
+    # set damage order for multi blocked attackers
     def compute_combat_damage(self, gs: GameState) -> dict[str, Any]:
         return self._compute_damage(gs, first_strike_only=False)
 
-	# core damage logic for both first strike and normal damage
+    # core damage logic for both first strike and normal damage
     def _compute_damage(self, gs: GameState, first_strike_only: bool) -> dict[str, Any]:
         damage_events: list[dict[str, Any]] = []
         creatures_died: list[str] = []
@@ -159,11 +159,11 @@ class CombatManager:
             if perm is None:
                 continue
 
-			# check first strike timing rules
+            # check first strike timing rules
             if first_strike_only:
                 if not self._deals_first_strike(perm):
                     continue
-			# check normal step timing rules
+            # check normal step timing rules
             else:
                 if self._has_first_strike(perm) and not self._has_double_strike(perm):
                     continue
@@ -209,7 +209,7 @@ class CombatManager:
                     if blocker_perm.damage >= blocker_perm.toughness:
                         creatures_died.append(blocker_id)
 
-		# blockers deal damage to attackers
+        # blockers deal damage to attackers
         for b_id, a_id in self.blockers.items():
             b_perm = self._find_permanent(gs, def_id, b_id)
             if b_perm is None:
@@ -274,7 +274,7 @@ class CombatManager:
                 return perm
         return None
 
-	# helper to find permanent on any battlefield
+    # helper to find permanent on any battlefield
     @staticmethod
     def _find_any_permanent(gs: GameState, permanent_id: str) -> Permanent | None:
         for perms in gs.battlefield.values():
@@ -283,7 +283,7 @@ class CombatManager:
                     return perm
         return None
 
-	# check if creature deals first strike or double strike damage
+    # check if creature deals first strike or double strike damage
     @staticmethod
     def _deals_first_strike(perm: Permanent) -> bool:
         return (
@@ -291,7 +291,7 @@ class CombatManager:
             or CombatManager._has_double_strike(perm)
         )
 
-	# check first strike keyword
+    # check first strike keyword
     @staticmethod
     def _has_first_strike(perm: Permanent) -> bool:
         return any(
@@ -299,7 +299,7 @@ class CombatManager:
             for a in getattr(perm, "abilities", [])
         )
 
-	# check double strike keyword
+    # check double strike keyword
     @staticmethod
     def _has_double_strike(perm: Permanent) -> bool:
         return any(
@@ -307,7 +307,7 @@ class CombatManager:
             for a in getattr(perm, "abilities", [])
         )
 
-	# check vigilance keyword
+    # check vigilance keyword
     @staticmethod
     def _has_vigilance(perm: Permanent) -> bool:
         return any(

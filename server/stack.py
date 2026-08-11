@@ -13,15 +13,15 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
 
     # loop until state is stable
     try:
-		# check battlefield for dead permanents
+        # check battlefield for dead permanents
         for player_id, perms in gs.battlefield.items():
             dead_perms = []
             for perm in perms:
-				# check valid card loader
+                # check valid card loader
                 if card_loader is None:
                     continue
                 
-				# extract permanent instance id
+                # extract permanent instance id
                 perm_id = getattr(perm, "instance_id", None) or getattr(perm, "id", None) or getattr(perm, "card_id", None)
                 
                 # check valid perm id
@@ -53,7 +53,7 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
                 # add to graveyard
                 gs.graveyards.setdefault(player_id, []).append(dead_id)
                 
-				# append zone change packet
+                # append zone change packet
                 sba_changes.append({
                     "type": "ZONE_CHANGE",
                     "object_id": dead_id,
@@ -63,7 +63,7 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
                 })
                 print(f"--- [SERVER] SBA: {dead_id} died and {base_id} was sent to graveyard!")
     
-	# handle sba execution errors        
+    # handle sba execution errors        
     except Exception as e:
         import traceback
         print("\n" + "!"*50)
@@ -71,12 +71,12 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
         traceback.print_exc()
         print("!"*50 + "\n")
     
-	# return recorded sba changes
+    # return recorded sba changes
     return sba_changes
 
 class StackManager:
     # stack manager class
-	# creates pushes and resolves items on stack
+    # creates pushes and resolves items on stack
 
     def __init__(self) -> None:
         # init stack manager and card def cache
@@ -92,10 +92,10 @@ class StackManager:
         card_def: Any = None,
     ) -> StackItem:
         # push spell or ability onto stack
-		# incremnt stack counter
+        # incremnt stack counter
         gs.stack_counter += 1
 
-		# construct stack item
+        # construct stack item
         stack_item = StackItem(
             stack_item_id=f"stk_{gs.stack_counter:02d}",
             item_type=item_type,
@@ -105,7 +105,7 @@ class StackManager:
             card_def=card_def,
         )
 
-		# append to game state stack
+        # append to game state stack
         gs.stack.append(stack_item)
         if card_def is not None:
             self._card_def_cache[stack_item.stack_item_id] = card_def
@@ -118,18 +118,18 @@ class StackManager:
             card_loader: Any = None,
         ) -> tuple[str, list[dict[str, Any]]]:
 
-		# return fizzle if stack empty
+        # return fizzle if stack empty
         if not gs.stack:
             return "FIZZLE", []
 
-		# pop top item
+        # pop top item
         item = gs.stack.pop()
         card_def = item.card_def or self._card_def_cache.get(item.stack_item_id)
 
         # check if item fizzles from invalid targets
         fizzle = self._check_fizzle(gs, item)
 
-		# return fizzle if targets invalid
+        # return fizzle if targets invalid
         if fizzle:
             return "FIZZLE", []
 
@@ -144,7 +144,7 @@ class StackManager:
             extra["card_loader"] = card_loader
 
         if card_def is not None:
-			# derive base card id for resolution
+            # derive base card id for resolution
             base_id = getattr(card_def, "card_id_base", "")
             if not base_id:
                 base_id = item.source
@@ -186,10 +186,10 @@ class StackManager:
     ) -> StackItem:
         # push trigger ability onto stack
 
-		# increment stack counter
+        # increment stack counter
         gs.stack_counter += 1
 
-		# construct trigger stack item
+        # construct trigger stack item
         item = StackItem(
             stack_item_id=f"stk_{gs.stack_counter:02d}",
             item_type="TRIGGER_ABILITY",
@@ -203,11 +203,11 @@ class StackManager:
         gs.stack.append(item)
         return item
 
-	# check if stack is empty
+    # check if stack is empty
     def is_empty(self, gs: GameState) -> bool:
         return len(gs.stack) == 0
 
-	# return top stack item without popping
+    # return top stack item without popping
     def top(self, gs: GameState) -> StackItem | None:
         if not gs.stack:
             return None
@@ -216,7 +216,7 @@ class StackManager:
     def _check_fizzle(self, gs: GameState, item: StackItem) -> bool:
         # validate item targeting validity
         
-		if not item.targets:
+        if not item.targets:
             return False
         
         valid_targets = 0
@@ -238,6 +238,6 @@ class StackManager:
         # return true if no valid targets remain
         return valid_targets == 0
 
-	# clear card def cache on game over
+    # clear card def cache on game over
     def clear_cache(self) -> None:
         self._card_def_cache.clear()
