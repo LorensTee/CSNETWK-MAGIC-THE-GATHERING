@@ -1,21 +1,3 @@
-"""
-server/game_lifecycle.py — Game Lifecycle FSM (Module 02: Server Engine)
-
-The core state machine that drives the MTGNP game lifecycle:
-
-    LOBBY → GAME_SETUP → MULLIGAN → IN_GAME → GAME_OVER → LOBBY (loop)
-
-Each state has a dedicated ``_run_<state>()`` coroutine.  The lifecycle also
-owns the handler methods for all 14 client-to-server PDU types, which the
-dispatcher calls when a PDU arrives.
-
-**IMPORTANT — single-reader architecture:**
-The ``read_loop`` in each ``ServerConnection`` is the **sole** PDU reader.
-During priority windows the ``PriorityManager`` does NOT call ``recv_pdu``
-directly — it awaits a future resolved by the dispatcher.  This avoids
-races between concurrent readers on the same TCP stream.
-"""
-
 from __future__ import annotations
 
 import asyncio
