@@ -1,11 +1,3 @@
-"""
-server/server.py — Game Server (Module 02: Server Engine)
-
-Top-level server orchestration.  Creates the listening socket, accepts
-exactly two client connections, wraps each in a ``ServerConnection``,
-connects the dispatcher, and hands off to ``GameLifecycle``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -21,30 +13,22 @@ from server.game_lifecycle import GameLifecycle
 
 
 class GameServer:
-    """The MTGNP game server.
-
-    Parameters
-    ----------
-    config :
-        Server configuration.
-    """
-
     def __init__(self, config: ServerConfig) -> None:
         self.config = config
 
-        # Load card data.
+        # load card data
         self.card_loader = CardLoader()
         self.card_loader.load()
 
-        # Active connections (max 2).
+        # max 2 active connections
         self._connections: list[ServerConnection] = []
 
-        # Queue for the accept loop.
+        # queue for accept loop
         self._incoming: asyncio.Queue[ServerConnection] = asyncio.Queue()
         self._server_instance: asyncio.AbstractServer | None = None
 
     async def run(self) -> None:
-        """Start the server and run game sessions indefinitely."""
+        """start the server and run game sessions infinitely"""
         self._server_instance = await asyncio.start_server(
             self._on_client_connected,
             host=self.config.host,
@@ -58,12 +42,12 @@ class GameServer:
             await self._game_loop()
 
     async def _game_loop(self) -> None:
-        """Accept pairs of connections and run game sessions."""
+        """accept pairs of connections and run game session"""
         while True:
             self._connections.clear()
             self._incoming = asyncio.Queue()
 
-            # Accept exactly two connections.
+            # 2 CONNECTIONS ONLY
             while len(self._connections) < 2:
                 conn = await self._incoming.get()
                 self._connections.append(conn)
@@ -71,7 +55,7 @@ class GameServer:
                 peername = conn.writer.get_extra_info("peername")
                 print(f"Player {len(self._connections)} connected ({peername})")
 
-            # Create lifecycle and wire dispatcher.
+            # lifecycle
             lifecycle = GameLifecycle(self.config, self.card_loader, self._connections)
             for conn in self._connections:
                 conn.on_pdu = lambda c, pdu, lc=lifecycle: dispatch(lc, c, pdu)
@@ -79,11 +63,11 @@ class GameServer:
             async def connection_manager():
                 import time, json, struct
                 disconnect_times = {}
-                print("[WATCHDOG] ONLINE AND SWEEPING!") # If you don't see this, the task is dead.
+                print("[WATCHDOG] ONLINE AND SWEEPING!")
                 
                 while not lifecycle._game_over.is_set():
                     try:
-                        # 1. Sweep for timeouts
+                        # sweep for timeouts
                         for i, c in enumerate(self._connections):
                             if getattr(c, '_closed', False):
                                 if c not in disconnect_times:
@@ -108,13 +92,13 @@ class GameServer:
                                     lifecycle._game_over.set()
                                     return
                         
-                        # 2. Process incoming connections
+                        # process incoming connections
                         try:
                             new_conn = await asyncio.wait_for(self._incoming.get(), timeout=1.0)
                         except (asyncio.TimeoutError, TimeoutError):
-                            continue # Nothing came in, go loop again
+                            continue # loop again
                             
-                        # Find the empty seat
+                        # find empty seat
                         for i, old_conn in enumerate(self._connections):
                             if getattr(old_conn, '_closed', False):
                                 if old_conn in disconnect_times and (time.time() - disconnect_times[old_conn] > self.config.disconnect_timeout_s):
@@ -138,16 +122,16 @@ class GameServer:
                         print(f"[WATCHDOG CRASHED]: {e}")
                         await asyncio.sleep(1)
 
-            # 1. START THE WATCHDOG FIRST
+            # START WATCHDOG FIRST
             conn_manager_task = asyncio.create_task(connection_manager())
 
-            # 2. RUN THE GAME SECOND
+            # RUN THE GAME
             await lifecycle.run()
 
-            # 3. CLEAN UP THIRD
+            # CLEAN UP
             conn_manager_task.cancel()
 
-            # Reset for next game.
+            # reset for next game
             for conn in self._connections:
                 conn.seq_num = 0
                 conn.player_id = None
@@ -157,15 +141,11 @@ class GameServer:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> None:
-        """Callback for each new TCP connection.
-
-        Accepts up to 2 connections; refuses extras.
-        """
-
+        """callback for each new TCP connection"""
         active_count = sum(1 for c in self._connections if not c._closed)
 
         if active_count >= 2:
-            # Already have two players — refuse.
+            # refuse if more than 2
             if self.config.verbose:
                 import sys
                 print(
@@ -178,7 +158,7 @@ class GameServer:
 
         conn = ServerConnection(
             reader, writer,
-            on_pdu=None,  # Set by _game_loop after lifecycle is created.
+            on_pdu=None,
             verbose=self.config.verbose,
         )
         await self._incoming.put(conn)

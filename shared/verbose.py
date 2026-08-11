@@ -1,16 +1,3 @@
-"""
-shared/verbose.py — Verbose PDU Formatting (Module 01: Network Protocol)
-
-Provides one-line formatting functions for PDU logging.  Both the server
-and client call these when ``--verbose`` mode is active.  All output goes
-to *stderr* — callers decide where to print the returned string.
-
-Verbose output format (example)::
-
-    [S→C player_1] GAME_STATE_UPDATE seq=44 | phase=PRECOMBAT_MAIN life={p1:17,p2:12}
-    [C→S player_2] PRIORITY_PASS seq=49
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -20,11 +7,10 @@ from shared.pdus import PDU_TYPES
 import json
 
 def _summarize(pdu: dict[str, Any]) -> str:
-    """Return a compact one-line summary of *pdu* appropriate for logging."""
+    """return a compact summary of PDU appropriate for logging"""
     pdu_type = pdu.get("type", "?")
     seq = pdu.get("seq_num", "?")
 
-    # Build a suffix with type-specific details.
     parts: list[str] = []
 
     if pdu_type == "GAME_STATE_UPDATE":
@@ -83,7 +69,7 @@ def _summarize(pdu: dict[str, Any]) -> str:
         parts.append(f"count={len(card_ids)}")
 
     elif pdu_type == "PRIORITY_PASS":
-        pass  # Nothing extra beyond seq_num.
+        pass
 
     elif pdu_type == "PLAYER_READY":
         parts.append(f"id={pdu.get('player_id', '?')}")
@@ -102,7 +88,7 @@ def _summarize(pdu: dict[str, Any]) -> str:
         parts.append(f"code={pdu.get('code', '?')}")
         msg = pdu.get("message", "")
         if msg:
-            parts.append(f"msg={msg[:60]}")  # Truncate long messages.
+            parts.append(f"msg={msg[:60]}")
 
     elif pdu_type == "COMBAT_DAMAGE_RESULT":
         events = pdu.get("damage_events", [])

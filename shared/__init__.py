@@ -1,6 +1,6 @@
 """
-shared — Code shared by both server and client.
+shared (shared by client and server)
 
 Provides protocol constants, PDU framing, type definitions, and verbose-mode
-formatting utilities that are used across all modules.
+formatting utilities that are used across all modules
 """

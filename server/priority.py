@@ -1,16 +1,3 @@
-"""
-server/priority.py — Priority Manager (Module 02: Server Engine)
-
-Implements the MTGNP priority system (RFC §7.3).  The ``PriorityManager``
-issues ``PRIORITY_GRANT`` PDUs to players, enforces the time limit, and
-determines when both players have passed priority consecutively.
-
-**Important:** This manager does NOT call ``conn.recv_pdu()`` directly.
-Instead ``grant_priority`` accepts an optional ``read_pdu`` async callback.
-The caller (``GameLifecycle``) provides ``wait_for_pdu`` which uses a
-dispatcher-resolved future, keeping the TCP stream single-reader safe.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,11 +10,7 @@ from shared.pdus import create_error, create_priority_grant, validate_seq_num
 
 
 class PriorityTimeout(Exception):
-    """Raised when a player fails to respond within the time limit.
-
-    The caller should treat this as a disconnection and broadcast
-    ``GAME_OVER(DISCONNECT)``.
-    """
+    """raised when player fails to respond within the time limit"""
 
     def __init__(self, player_id: str) -> None:
         self.player_id = player_id
@@ -35,11 +18,7 @@ class PriorityTimeout(Exception):
 
 
 class ConnectionLost(Exception):
-    """Raised when a player's TCP connection is lost during priority.
-
-    The caller should treat this as a disconnection and broadcast
-    ``GAME_OVER(DISCONNECT)``.
-    """
+    """raised when a player's connection is lost during priority"""
 
     def __init__(self, player_id: str) -> None:
         self.player_id = player_id
@@ -47,18 +26,9 @@ class ConnectionLost(Exception):
 
 
 ReadPduCb = Callable[[str, float], Coroutine[Any, Any, dict[str, Any]]]
-"""Signature: ``async cb(player_id: str, timeout_s: float) -> dict``."""
-
 
 class PriorityManager:
-    """Manages priority grants and the pass/resolve cycle.
-
-    Parameters
-    ----------
-    config :
-        Server configuration (used for *time_limit_ms*).
-    """
-
+    """manages priority grants and the pass/resolve cycle"""
     def __init__(self, config: ServerConfig) -> None:
         self.config = config
 
@@ -70,44 +40,21 @@ class PriorityManager:
         read_pdu: ReadPduCb | None = None,
         timeout_ms: int | None = None,
     ) -> dict[str, Any] | None:
-        """Grant priority to *player_id* and wait for their response.
-
-        Parameters
-        ----------
-        conn :
-            The player's ``ServerConnection`` (used to send the grant).
-        player_id :
-            Player ID.
-        read_pdu :
-            Optional async callback to read the next PDU.  If provided,
-            used instead of ``conn.recv_pdu()`` (avoids race conditions
-            with the read-loop / dispatcher).
-        timeout_ms :
-            Override for *config.time_limit_ms*.
-
-        Returns
-        -------
-        The action PDU, or ``None`` if the player passed.
-
-        Raises
-        ------
-        PriorityTimeout
-        ConnectionError
-        """
+        """grant priority to player and wait for their response"""
         timeout = timeout_ms if timeout_ms is not None else self.config.time_limit_ms
         timeout_s = timeout / 1000.0
 
         while True:
-            # 1. Send PRIORITY_GRANT (send_pdu sets seq_num automatically).
+            # send PRIORITY_GRANT
             grant_pdu = create_priority_grant(
-                seq_num=0,  # placeholder — send_pdu overwrites this.
+                seq_num=0,
                 player_id=player_id,
                 time_limit_ms=timeout,
             )
             await conn.send_pdu(grant_pdu)
             expected_seq = conn.seq_num
 
-            # 2. Wait for response with timeout.
+            # wait for response w/ timeout
             try:
                 if read_pdu is not None:
                     response = await asyncio.wait_for(
@@ -122,7 +69,7 @@ class PriorityManager:
             except (ProtocolError, ConnectionError, EOFError, OSError) as exc:
                 raise ConnectionLost(player_id) from exc
 
-            # 3. Validate seq_num.
+            # validate seq_num
             actual = response.get("seq_num", -1)
             if not validate_seq_num(expected_seq, actual):
                 err_pdu = create_error(
@@ -135,9 +82,9 @@ class PriorityManager:
                     rejected_action=response,
                 )
                 await conn.send_pdu(err_pdu)
-                continue  # Re-issue grant.
+                continue
 
-            # 4. Return the response.
+            # return the response
             return response
 
     async def run_priority_window(
@@ -150,26 +97,7 @@ class PriorityManager:
         read_pdu: ReadPduCb | None = None,
         on_ap_pass_cb: Any = None,
     ) -> tuple[bool, dict[str, Any] | None]:
-        """Run one full priority window (AP → NAP).
-
-        Parameters
-        ----------
-        ap_conn, nap_conn :
-            Player connections.
-        ap_id, nap_id :
-            Player IDs.
-        read_pdu :
-            Async callback to read the next PDU (see *grant_priority*).
-
-        Returns
-        -------
-        ``(both_passed, action_pdu)``.
-
-        Raises
-        ------
-        PriorityTimeout
-        ConnectionError
-        """
+        """run 1 full priority"""
         ap_response = await self.grant_priority(
             ap_conn, ap_id, read_pdu=read_pdu,
         )
