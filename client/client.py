@@ -1,10 +1,3 @@
-"""
-client/client.py — Game Client State Machine (Module 03: Client App)
-
-The central client class that manages the connection, state, and all
-concurrent tasks (read, write, render, heartbeat, input).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -29,22 +22,6 @@ from shared.pdus import create_player_ready, create_ping
 
 
 class GameClient:
-    """The MTGNP game client.
-
-    Connects to the server, manages the client lifecycle state, and runs
-    five concurrent tasks:
-    1. *_read_loop* — receive PDUs from the server.
-    2. *_write_loop* — send PDUs to the server.
-    3. *_render_loop* — periodically redraw the terminal.
-    4. *_heartbeat_loop* — send PING every 30 s.
-    5. *_input_loop* — read player commands.
-
-    Parameters
-    ----------
-    config :
-        Client configuration.
-    """
-
     def __init__(self, config: ClientConfig) -> None:
         self.config = config
         self.connection: ClientConnection | None = None
@@ -53,28 +30,24 @@ class GameClient:
         self.outgoing_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.deck_list: list[str] = []
 
-        # The seq_num from the most recent PRIORITY_GRANT (for echo).
+        #seq_num from the most recent PRIORITY_GRANT
         self._current_priority_seq: int = 0
-        # Event-driven re-render signal.
+
         self._render_event: asyncio.Event = asyncio.Event()
 
-        # Sub-components (created in run()).
+        # sub-components
         self.dispatcher: ClientDispatcher | None = None
         self.renderer: Renderer | None = None
         self.heartbeat: HeartbeatManager | None = None
         self.input_handler: InputHandler | None = None
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Public entry point
-    # ═══════════════════════════════════════════════════════════════════════════
-
     async def run(self) -> None:
-        """Connect to the server and start all concurrent tasks."""
-        # 1. Load deck from file if provided.
+        """connect to the server and start all concurrent tasks"""
+        # load deck if provided
         if self.config.deck_file:
             self._load_deck_file(self.config.deck_file)
 
-        # 2. Connect.
+        # connect
         self.state = "CONNECTING"
         try:
             self.connection = await connect(
@@ -87,7 +60,7 @@ class GameClient:
             self.state = "DISCONNECTED"
             return
 
-        # 3. Create sub-components.
+        # create sub-components
         self.dispatcher = ClientDispatcher(self)
         self.renderer = Renderer(self)
         self.heartbeat = HeartbeatManager(self)
@@ -97,12 +70,12 @@ class GameClient:
         self.state = "LOBBY"
 
         my_deck = (
-            [f"mountain_{i:03d}" for i in range(1, 11)] +        # 10 Mountains
-            [f"forest_{i:03d}" for i in range(1, 11)] +          # 10 Forests
-            [f"goblin_guide_{i:03d}" for i in range(1, 5)] +     # 4 Haste Creatures (1 Red)
-            [f"grizzly_bears_{i:03d}" for i in range(1, 5)] +    # 4 Vanilla Creatures (1 Green, 1 Generic)
-            [f"giant_growth_{i:03d}" for i in range(1, 5)] +     # 4 Combat Buffs (1 Green)
-            [f"lightning_bolt_{i:03d}" for i in range(1, 5)]     # 4 Removals/Burn (1 Red)
+            [f"mountain_{i:03d}" for i in range(1, 11)] +
+            [f"forest_{i:03d}" for i in range(1, 11)] +
+            [f"goblin_guide_{i:03d}" for i in range(1, 5)] +
+            [f"grizzly_bears_{i:03d}" for i in range(1, 5)] +
+            [f"giant_growth_{i:03d}" for i in range(1, 5)] +
+            [f"lightning_bolt_{i:03d}" for i in range(1, 5)]
         )
 
         ready_pdu = {
@@ -113,7 +86,7 @@ class GameClient:
         }
         await self.connection.send_pdu(ready_pdu)
 
-        # 4. Run concurrent tasks (use gather for Python 3.10 compatibility).
+        # run tasks
         tasks = [
             asyncio.create_task(self._read_loop()),
             asyncio.create_task(self._write_loop()),
@@ -129,12 +102,8 @@ class GameClient:
         finally:
             await self._cleanup()
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Async loops
-    # ═══════════════════════════════════════════════════════════════════════════
-
     async def _read_loop(self) -> None:
-        """Read PDUs from the server and dispatch them."""
+        """read PDUs from the server and dispatch"""
         conn = self.connection
         if conn is None:
             return
@@ -146,29 +115,27 @@ class GameClient:
                 self.state = "DISCONNECTED"
                 break
 
-            # conn.recv_pdu() already logs in verbose mode.
             if self.dispatcher is not None:
                 await self.dispatcher.dispatch(pdu)
 
     async def _write_loop(self) -> None:
-        """Drain the outgoing queue and send PDUs."""
+        """empty the outgoing queue and send PDUs"""
         while self.state != "DISCONNECTED":
             try:
                 pdu = await self.outgoing_queue.get()
                 if self.connection is not None:
                     await self.connection.send_pdu(pdu)
-                    # connection.send_pdu() already logs in verbose mode.
             except (ConnectionError, OSError) as exc:
                 print(f"\nSend failed: {exc}")
                 self.state = "DISCONNECTED"
                 break
 
     async def _render_loop(self) -> None:
-        """Wait for render events and redraw the screen."""
+        """wait for render and redraw"""
         renderer = self.renderer
         if renderer is None:
             return
-        # Trigger an initial draw.
+        #trigger an initial draw
         self._render_event.set()
         while self.state != "DISCONNECTED":
             await self._render_event.wait()
@@ -176,21 +143,17 @@ class GameClient:
             renderer.draw(self.state, self.visible_state)
 
     async def _heartbeat_loop(self) -> None:
-        """Run the PING/PONG heartbeat."""
+        """run PINGPONG heartbeat"""
         if self.heartbeat is not None:
             await self.heartbeat.run()
 
     async def _input_loop(self) -> None:
-        """Run the input handler."""
+        """run input handler"""
         if self.input_handler is not None:
             await self.input_handler.run()
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Deck file loading
-    # ═══════════════════════════════════════════════════════════════════════════
-
     def _load_deck_file(self, path: str) -> None:
-        """Read a deck file: one card ID per line, skip ``#`` comments."""
+        """read file from user provided deck while ignoring lines with #"""
         try:
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -204,12 +167,8 @@ class GameClient:
             print("Falling back to interactive deck entry.")
             self.deck_list = []
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Cleanup
-    # ═══════════════════════════════════════════════════════════════════════════
-
     async def _cleanup(self) -> None:
-        """Close the connection gracefully."""
+        """Close the connection """
         if self.connection is not None:
             await self.connection.close()
             self.connection = None
