@@ -1,11 +1,3 @@
-"""
-client/renderer.py — Terminal Renderer (Module 03: Client App)
-
-Draws the visible game state in a terminal-based UI using Unicode box-drawing
-characters.  The renderer is deliberately simple: it formats what the server
-sends and NEVER computes game outcomes.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -16,33 +8,13 @@ if TYPE_CHECKING:
 
 
 class Renderer:
-    """Renders the visible game state to the terminal.
-
-    Parameters
-    ----------
-    client :
-        The ``GameClient`` whose *visible_state* and *state* are drawn.
-    """
-
+    """renders visible game state to the terminal"""
     def __init__(self, client: GameClient) -> None:
         self.client = client
         self._width = 78
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Public entry point
-    # ═══════════════════════════════════════════════════════════════════════════
-
     def draw(self, state: str, visible_state: dict[str, Any]) -> None:
-        """Clear the screen and redraw the full UI.
-
-        Parameters
-        ----------
-        state :
-            Client state string (``'LOBBY'``, ``'MULLIGAN'``, ``'IN_GAME'``,
-            ``'GAME_OVER'``, …).
-        visible_state :
-            The ``state`` dict from the most recent ``GAME_STATE_UPDATE``.
-        """
+        """clear screen and redraw"""
         self._clear_screen()
 
         if not visible_state:
@@ -61,46 +33,42 @@ class Renderer:
 
         lines: list[str] = []
 
-        # ── Header ──────────────────────────────────────────────────────
+        # header
         header = (
             f" MTGNP 1.0 — You are: {player_id}  "
             f"Turn: {turn}  Phase: {phase} "
         )
         lines.extend(self._bordered_double(header))
 
-        # ── Opponent board ──────────────────────────────────────────────
+        # opponents board
         opp_lines = self._build_opponent_board(visible_state, opponent, player_id)
         lines.extend(self._bordered_box(f" Opponent ({opponent}) ", opp_lines))
 
-        # ── Stack ───────────────────────────────────────────────────────
+        # stack laman
         stack_lines = self._build_stack(visible_state)
         if stack_lines:
             lines.extend(self._bordered_box(" Stack ", stack_lines))
 
-        # ── Your board ──────────────────────────────────────────────────
+        # players board
         own_lines = self._build_own_board(visible_state, player_id)
         lines.extend(self._bordered_box(f" Your Board ({player_id}) ", own_lines))
 
-        # ── Your hand ───────────────────────────────────────────────────
+        # cards on hand
         hand_lines = self._build_hand(visible_state, player_id)
         lines.extend(self._bordered_box(" Your Hand ", hand_lines))
 
-        # ── Status line ─────────────────────────────────────────────────
+        # stats
         status = self._status_line(state, visible_state, player_id)
         lines.extend(self._bordered_double(status))
 
-        # ── Prompt ──────────────────────────────────────────────────────
+        # prompt
         prompt = self._phase_prompt(phase, state)
         lines.append(prompt)
         lines.append("> ")
 
-        # Print everything.
+        # print all
         sys.stdout.write("\n".join(lines))
         sys.stdout.flush()
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Board sections
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def _build_opponent_board(
         self,
@@ -108,7 +76,7 @@ class Renderer:
         opponent: str,
         player_id: str,
     ) -> list[str]:
-        """Build the opponent-board section lines."""
+        """build the opponents board lines"""
         lines: list[str] = []
 
         life = vs.get("life_totals", {}).get(opponent, 20)
@@ -119,7 +87,7 @@ class Renderer:
         lib_count = vs.get("library_counts", {}).get(opponent, 0)
         lines.append(f"  Hand: {hand_count} cards  |  Library: {lib_count} cards")
 
-        # Battlefield.
+        # battlefield
         bf = vs.get("battlefield", {})
         opp_perms = bf.get(opponent, [])
         if opp_perms:
@@ -129,11 +97,11 @@ class Renderer:
         else:
             lines.append("  Battlefield: (empty)")
 
-        # Graveyard.
+        # graveyard
         gy = vs.get("graveyard", {})
         opp_gy = gy.get(opponent, [])
         if opp_gy:
-            gy_str = ", ".join(self._short_name(c) for c in opp_gy[-5:])  # last 5
+            gy_str = ", ".join(self._short_name(c) for c in opp_gy[-5:])  #last 5
             lines.append(f"  Graveyard: [{gy_str}]")
         else:
             lines.append("  Graveyard: (empty)")
@@ -145,7 +113,7 @@ class Renderer:
         vs: dict[str, Any],
         player_id: str,
     ) -> list[str]:
-        """Build the own-board section lines."""
+        """Build the players board lines"""
         lines: list[str] = []
 
         life = vs.get("life_totals", {}).get(player_id, 20)
@@ -154,7 +122,7 @@ class Renderer:
         lib_count = vs.get("library_counts", {}).get(player_id, 0)
         lines.append(f"  Library: {lib_count} cards")
 
-        # Battlefield.
+        # battlefield
         bf = vs.get("battlefield", {})
         own_perms = bf.get(player_id, [])
         if own_perms:
@@ -164,7 +132,7 @@ class Renderer:
         else:
             lines.append("  Battlefield: (empty)")
 
-        # Graveyard.
+        # graveyard
         gy = vs.get("graveyard", {})
         own_gy = gy.get(player_id, [])
         if own_gy:
@@ -180,7 +148,7 @@ class Renderer:
         vs: dict[str, Any],
         player_id: str,
     ) -> list[str]:
-        """Build the hand section lines (numbered cards)."""
+        """Build hand lines"""
         lines: list[str] = []
         hand = vs.get("hand", [])
         if hand:
@@ -194,7 +162,7 @@ class Renderer:
         self,
         vs: dict[str, Any],
     ) -> list[str]:
-        """Build the stack section lines."""
+        """Build stack lines"""
         stack = vs.get("stack", [])
         if not stack:
             return []
@@ -211,17 +179,13 @@ class Renderer:
             lines.append(f"{prefix}{si.get('stack_item_id','?')} {source} ({ctrl}) → {tgt_str}{suffix}")
         return lines
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Status & prompt
-    # ═══════════════════════════════════════════════════════════════════════════
-
     def _status_line(
         self,
         state: str,
         vs: dict[str, Any],
         player_id: str,
     ) -> str:
-        """Build the status line (inside double-border box)."""
+        """Build the stats lines"""
         if state in ("LOBBY", "GAME_SETUP"):
             return f" Status: {state}  —  {vs.get('waiting_for', 'waiting for players')} "
         if state == "MULLIGAN":
@@ -241,7 +205,7 @@ class Renderer:
             return " [WAITING — no priority window] "
 
     def _phase_prompt(self, phase: str, state: str) -> str:
-        """Return the phase-appropriate command hint."""
+        """return the phase cmd hint"""
         if state == "LOBBY":
             return "Commands: deck <card_id> ...  |  ready  |  help"
         if state == "MULLIGAN":
@@ -264,13 +228,9 @@ class Renderer:
         }
         return f"Commands: {prompts.get(phase, 'pass  |  cast <N> [target]  |  concede  |  help')}"
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Helper formatting
-    # ═══════════════════════════════════════════════════════════════════════════
-
     @staticmethod
     def _life_bar(life: int) -> str:
-        """Return a visual life bar, e.g. ``████████████████░░░░  16``."""
+        """return a visual life bar"""
         life = max(0, min(life, 20))
         filled = life
         empty = 20 - filled
@@ -279,11 +239,7 @@ class Renderer:
 
     @staticmethod
     def _permanent_line(perm: dict[str, Any]) -> str:
-        """Format one permanent for display.
-
-        Non-creatures: ``[T] name``  or  ``[ ] name``
-        Creatures:     ``[T] name (P/T, N dmg) [abilities]``
-        """
+        """format 1 perm for display"""
         tap = "[T]" if perm.get("tapped") else "[ ]"
         name = perm.get("id", "?")
 
@@ -303,7 +259,6 @@ class Renderer:
             stats += f", {damage} dmg"
         stats += ")"
 
-        # Abbrevs.
         abbr = perm.get("abilities", [])
         if abbr:
             abbrev_str = self._ability_abbrevs(abbr)
@@ -316,12 +271,8 @@ class Renderer:
 
     @staticmethod
     def _short_name(card_id: str) -> str:
-        """Shorten a card instance ID for display.
-
-        ``'lightning_bolt_001'`` → ``'lightning_bolt'``
-        ``'mountain_001'`` → ``'mountain'``
-        """
-        # If it ends with _NNN, strip the number.
+        """Shorten a card ID for display"""
+        # removes the numbers at the end
         parts = card_id.rsplit("_", 1)
         if parts[-1].isdigit():
             return parts[0]
@@ -329,7 +280,7 @@ class Renderer:
 
     @staticmethod
     def _ability_abbrevs(abilities: list) -> str:
-        """Map keyword ability names to short display codes."""
+        """maps to short display codes"""
         KEYWORD_MAP = {
             "haste": "H",
             "flying": "F",
@@ -355,26 +306,21 @@ class Renderer:
 
     @staticmethod
     def _get_opponent(vs: dict[str, Any]) -> str:
-        """Derive the opponent's player ID from visible state."""
+        """derive opponent's player ID"""
         life = vs.get("life_totals", {})
         for pid in life:
-            # Return the first player ID that isn't us (we'll know later).
             return pid
         return "opponent"
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Box-drawing helpers
-    # ═══════════════════════════════════════════════════════════════════════════
-
     @classmethod
     def _bordered_box(cls, title: str, lines: list[str]) -> list[str]:
-        """Wrap *lines* in a single-line box ``┌─┐`` / ``│`` / ``└─┘``."""
+        """lines for single line boxes"""
         if not lines:
             lines = ["  (empty)"]
         width = max(len(l) for l in lines) if lines else 20
         width = max(width, len(title) + 4)
         result: list[str] = []
-        # Top border with title.
+        # top border w/ title
         top = "┌─" + title + "─" + "─" * (width - len(title) - 2) + "┐"
         result.append(top)
         for line in lines:
@@ -384,7 +330,7 @@ class Renderer:
 
     @classmethod
     def _bordered_double(cls, text: str) -> list[str]:
-        """Wrap *text* in a double-line box ``╔═╗`` / ``║`` / ``╚═╝``."""
+        """double line box"""
         width = max(len(text), 30)
         return [
             "╔" + "═" * width + "╗",
@@ -394,10 +340,7 @@ class Renderer:
 
     @staticmethod
     def _clear_screen() -> None:
-        """Clear the terminal using ANSI escape codes.
-
-        Falls back to 50 blank lines if the output is not a TTY.
-        """
+        """clears the terminal"""
         if sys.stdout.isatty():
             sys.stdout.write("\033[2J\033[H")
         else:
@@ -405,7 +348,7 @@ class Renderer:
         sys.stdout.flush()
 
     def _draw_connecting(self) -> None:
-        """Draw a placeholder while waiting for the first state update."""
+        """draw placeholder while waiting for update"""
         lines = self._bordered_double(" MTGNP 1.0 — Connecting to server... ")
         lines.append("")
         lines.append("  Waiting for game state...")

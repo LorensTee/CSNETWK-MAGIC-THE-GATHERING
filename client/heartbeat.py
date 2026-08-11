@@ -1,15 +1,3 @@
-"""
-client/heartbeat.py — PING/PONG Heartbeat (Module 03: Client App)
-
-Implements the client-side heartbeat protocol (RFC §4.3):
-
-* Send ``PING`` every 30 seconds with a client-maintained seq_num and
-  a Unix-epoch-milliseconds timestamp.
-* The server echoes ``PONG`` with the same seq_num and timestamp.
-* If no ``PONG`` is received within 10 seconds, the client considers the
-  server unreachable and disconnects.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,35 +11,23 @@ if TYPE_CHECKING:
 
 
 class HeartbeatManager:
-    """Manages the PING/PONG heartbeat cycle.
-
-    Parameters
-    ----------
-    client :
-        The ``GameClient`` whose *outgoing_queue* is used to send PINGs.
-    """
-
+    """manages PINGPONG heartbeat"""
     def __init__(self, client: GameClient) -> None:
         self.client = client
         self._ping_seq: int = 0
         self._last_ping_time: float | None = None
         self._pong_received = asyncio.Event()
-        self._pong_received.set()  # Start in "received" state.
+        self._pong_received.set()
 
     async def run(self) -> None:
-        """Run the heartbeat loop.
-
-        Sends a ``PING`` every 30 seconds and waits up to 10 seconds for a
-        ``PONG``.  On timeout, sets ``client.state = 'DISCONNECTED'`` and
-        returns.
-        """
+        """run heartbeat loop"""
         while self.client.state not in ("DISCONNECTED", "GAME_OVER"):
             await asyncio.sleep(30)
 
             if self.client.state == "DISCONNECTED":
                 break
 
-            # Increment our counter.
+            #increment counter
             self._ping_seq += 1
             timestamp_ms = int(time.time() * 1000)
 
@@ -61,7 +37,7 @@ class HeartbeatManager:
             self._last_ping_time = time.monotonic()
             self._pong_received.clear()
 
-            # Wait for PONG with 10-second timeout.
+            #wait for PONG for 10 seconds, else dc
             try:
                 await asyncio.wait_for(self._pong_received.wait(), timeout=10.0)
             except asyncio.TimeoutError:
@@ -70,8 +46,5 @@ class HeartbeatManager:
                 return
 
     def on_pong(self, pdu: dict) -> None:
-        """Handle a received ``PONG`` PDU.
-        
-        Bypassing the seq_num check because the server uses a global sequence counter.
-        """
+        """Handle a PONG PDU"""
         self._pong_received.set()
