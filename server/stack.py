@@ -59,7 +59,7 @@ def check_state_based_actions(gs, card_loader) -> list[dict[str, Any]]:
     except Exception as e:
         import traceback
         print("\n" + "!"*50)
-        print("💥 CRASH IN STATE BASED ACTIONS 💥")
+        print("CRASH IN STATE BASED ACTIONS")
         traceback.print_exc()
         print("!"*50 + "\n")
         
