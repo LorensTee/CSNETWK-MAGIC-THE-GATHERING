@@ -105,7 +105,7 @@ class GameLifecycle:
 
     # main method executing game loop state machine
     async def run(self) -> None:
-        """Run the full game lifecycle (LOBBY → … → GAME_OVER → loop)."""
+        """Run the full game lifecycle"""
         while True:
             # resets game over event flag to false
             self._game_over.clear()

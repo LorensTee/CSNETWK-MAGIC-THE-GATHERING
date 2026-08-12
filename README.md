@@ -99,19 +99,19 @@ python -m unittest discover tests -v
 
 ## Work Distribution Matrix
 
-| Task / Feature | Member 1 | Member 2 | Member 3 | Member 4 |
+| Task / Feature | Ang, Byron | Dee, Adrian | Sotingco, Kimberly | Tee, John |
 |---|---|---|---|---|
-| TCP Server: connection handling, framing, dispatch | | | | |
-| Game lifecycle: LOBBY, GAME_SETUP, MULLIGAN logic | | | | |
-| Turn & phase engine (all phases/steps, transitions) | | | | |
-| Priority & Stack logic, spell/ability resolution | | | | |
-| Combat system (attackers, blockers, damage) | | | | |
-| Client implementation & state rendering | | | | |
-| PDU serialisation/deserialisation (all 25 PDU types) | | | | |
-| Error handling, PING/PONG heartbeat, disconnect logic | | | | |
-| Verbose mode (client + server PDU logging) | | | | |
-| Testing & interoperability | | | | |
-| README / documentation / AI disclosure | | | | |
+| TCP Server: connection handling, framing, dispatch | | | |/|
+| Game lifecycle: LOBBY, GAME_SETUP, MULLIGAN logic | |/| | |
+| Turn & phase engine (all phases/steps, transitions) | |/| | |
+| Priority & Stack logic, spell/ability resolution |/| | | |
+| Combat system (attackers, blockers, damage) |/| | | |
+| Client implementation & state rendering | | |/| |
+| PDU serialisation/deserialisation (all 25 PDU types) | | | |/|
+| Error handling, PING/PONG heartbeat, disconnect logic | | | |/|
+| Verbose mode (client + server PDU logging) | | |/| |
+| Testing & interoperability |/| |/| |
+| README / documentation / AI disclosure | |/| | |
 
 ---
 
@@ -168,18 +168,17 @@ The following AI tools were used during the development of this project:
    draw a card on Turn 1.  This is correctly implemented in
    `server/turn_engine.py`.
 
+7. **Lobby after GAME OVER**: After a match concludes and the `GAME_OVER` PDU 
+   is broadcast, the server does not automatically transition back to the `LOBBY`
+   state to allow a rematch on the same TCP connection. Players must disconnect 
+   and restart the client and server processes to play another game.
+
 ---
 
 ## Project Structure
 
 ```
 mtgnp/
-├── 00_architecture_master.md   # System architecture and module index
-├── 01_network_protocol.md      # Module 1 — PDU definitions, framing
-├── 02_server_engine.md         # Module 2 — server game logic
-├── 03_client_app.md            # Module 3 — client app
-├── CONTRIBUTING.md             # Coding rules
-├── setup_project.sh            # Project initialisation script
 ├── data/                       # Card catalog CSVs
 ├── shared/                     # Code shared by server and client
 ├── server/                     # Game server implementation
